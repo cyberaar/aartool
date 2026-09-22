@@ -115,3 +115,46 @@
     mode: "0700"
     owner: "root"
     group: "root"
+
+# ── Verify the rules actually loaded ─────────────────────────────────────────
+# Writing the rules file is not the same as loading it, and nothing above would
+# notice the difference. `augenrules` stops at the first rule the running kernel
+# rejects (an unknown syscall, a `-F dir=` whose directory is absent), leaving a
+# PARTIAL and still-MUTABLE ruleset. That failure is swallowed three times over:
+# auditd's own ExecStartPost carries a leading `-`, the "Restart auditd" handler
+# sets `failed_when: false`, and the template task only reports that the file
+# changed. A host can therefore report a clean hardening run while auditing a
+# fraction of what the benchmark asks for. Check it explicitly and fail loudly.
+- name: "Flush handlers so auditd has restarted before the ruleset is checked"
+  ansible.builtin.meta: "flush_handlers"
+
+- name: "Read the running audit ruleset state"
+  ansible.builtin.command: "auditctl -s"
+  register: "_linux_auditd_state"
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Once a ruleset ending in `-e 2` has loaded, the kernel refuses every further
+# change until reboot and augenrules exits non-zero. That is the configured
+# end state, not a fault, so report it instead of failing the run.
+- name: "Load the audit rules, failing on any rule the kernel rejects"
+  when:
+    - "not ansible_check_mode"
+    - "'enabled 2' not in (_linux_auditd_state.stdout | default(''))"
+  ansible.builtin.command: "augenrules --load"
+  register: "_linux_auditd_load"
+  changed_when: "'No change' not in (_linux_auditd_load.stdout | default(''))"
+  failed_when: >-
+    _linux_auditd_load.rc != 0
+    or 'Syscall name unknown' in (_linux_auditd_load.stderr | default(''))
+    or 'There was an error in line' in (_linux_auditd_load.stderr | default(''))
+
+- name: "Report that the ruleset is immutable and a reboot is needed to change it"
+  when:
+    - "not ansible_check_mode"
+    - "'enabled 2' in (_linux_auditd_state.stdout | default(''))"
+  ansible.builtin.debug:
+    msg: >-
+      The audit ruleset is immutable (-e 2). {{ linux_auditd_rules_file }} is on
+      disk and takes effect at the next reboot.

@@ -56,6 +56,24 @@
         that: "'-w /etc/passwd' in (rules_content.content | b64decode)"
         fail_msg: "Expected CIS audit rules not found in rules file"
 
+    # ── The rendered ruleset must name no syscall this arch rejects ───────────
+    # `augenrules` aborts at the first rule the kernel refuses and every rule
+    # after it, including the closing `-e 2`, is then never loaded. The failure
+    # is invisible at run time, so catch it here on the rendered text. This runs
+    # even in containers where the audit subsystem cannot load anything.
+    - name: "Assert no rule names a syscall absent on x86_64"
+      vars:
+        _rendered: "{{ rules_content.content | b64decode }}"
+      ansible.builtin.assert:
+        that:
+          - "'-S umount,' not in _rendered"
+          - "',stime' not in _rendered"
+          - "'-S stime' not in _rendered"
+        fail_msg: >-
+          The rendered ruleset names a syscall that does not exist on x86_64
+          (umount or stime). augenrules will abort at that line and silently
+          leave a partial, mutable ruleset.
+
     # ── Service enabled at boot (always checked) ───────────────────────────────
     - name: "Check auditd is-enabled"
       ansible.builtin.command: systemctl is-enabled auditd
@@ -88,11 +106,20 @@
       changed_when: false
       register: auditctl_rules
 
+    # `auditctl -l` exits 0 and prints "No rules" when nothing is loaded, so
+    # asserting on rc alone passes against an entirely empty ruleset. Assert on
+    # the content.
     - name: "Assert audit rules are loaded"
       when: auditd_pgrep.rc == 0
       ansible.builtin.assert:
-        that: auditctl_rules.rc == 0
-        fail_msg: "auditctl -l failed (rc={{ auditctl_rules.rc }}): {{ auditctl_rules.stderr }}"
+        that:
+          - auditctl_rules.rc == 0
+          - "'No rules' not in auditctl_rules.stdout"
+          - auditctl_rules.stdout_lines | length > 10
+        fail_msg: >-
+          Expected a loaded audit ruleset, got
+          {{ auditctl_rules.stdout_lines | length }} rule(s):
+          {{ auditctl_rules.stdout[:200] }}
 
     # ── rsyslog (always checked) ───────────────────────────────────────────────
     - name: "Assert rsyslog is installed"
