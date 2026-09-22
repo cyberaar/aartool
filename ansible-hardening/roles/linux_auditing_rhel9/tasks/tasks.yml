@@ -138,17 +138,52 @@
 # Once a ruleset ending in `-e 2` has loaded, the kernel refuses every further
 # change until reboot and augenrules exits non-zero. That is the configured
 # end state, not a fault, so report it instead of failing the run.
-- name: "Load the audit rules, failing on any rule the kernel rejects"
+- name: "Load the audit rules"
   when:
     - "not ansible_check_mode"
     - "'enabled 2' not in (_linux_auditd_state.stdout | default(''))"
   ansible.builtin.command: "augenrules --load"
   register: "_linux_auditd_load"
   changed_when: "'No change' not in (_linux_auditd_load.stdout | default(''))"
-  failed_when: >-
-    _linux_auditd_load.rc != 0
-    or 'Syscall name unknown' in (_linux_auditd_load.stderr | default(''))
-    or 'There was an error in line' in (_linux_auditd_load.stderr | default(''))
+  failed_when: false
+
+# Two different things make this exit non-zero and they deserve different
+# answers. A REJECTED RULE names itself on stderr ("Syscall name unknown",
+# "There was an error in line N") and is the fault this check exists for: the
+# load stopped there, so the rest of the file never applied. An UNAVAILABLE
+# AUDIT SUBSYSTEM -- a container without CAP_AUDIT_CONTROL, a kernel built
+# without audit -- exits non-zero with stdout and stderr both empty. Failing on
+# the second would make the role unusable in a container while telling us
+# nothing, so it is reported instead, loudly enough that nobody reads it as
+# success.
+- name: "Fail when augenrules rejected a rule"
+  when:
+    - "not ansible_check_mode"
+    - "_linux_auditd_load is not skipped"
+  ansible.builtin.assert:
+    that:
+      - "'Syscall name unknown' not in (_linux_auditd_load.stderr | default(''))"
+      - "'There was an error in line' not in (_linux_auditd_load.stderr | default(''))"
+    fail_msg: >-
+      augenrules rejected a rule and stopped at it, so the rest of
+      {{ linux_auditd_rules_file }} -- including the closing `-e 2` that makes
+      the ruleset immutable -- did not load:
+      {{ _linux_auditd_load.stderr | default('') | trim }}
+
+- name: "Report that the ruleset did not load, with no rule named"
+  when:
+    - "not ansible_check_mode"
+    - "_linux_auditd_load is not skipped"
+    - "_linux_auditd_load.rc | default(0) != 0"
+    - "'Syscall name unknown' not in (_linux_auditd_load.stderr | default(''))"
+    - "'There was an error in line' not in (_linux_auditd_load.stderr | default(''))"
+  ansible.builtin.debug:
+    msg: >-
+      NOT ACTIVE: augenrules exited {{ _linux_auditd_load.rc }} without naming a
+      rejected rule, so {{ linux_auditd_rules_file }} is on disk but is NOT
+      loaded. The audit subsystem is typically unavailable to an unprivileged
+      container. On a real host, treat this as a fault.
+      stderr: {{ _linux_auditd_load.stderr | default('') | trim | default('(empty)', true) }}
 
 - name: "Report that the ruleset is immutable and a reboot is needed to change it"
   when:

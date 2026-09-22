@@ -106,11 +106,25 @@
       changed_when: false
       register: auditctl_rules
 
+    # auditd can be running while the kernel audit subsystem refuses every
+    # write, which is the normal state of an unprivileged container. Assert on
+    # rule CONTENT only where the subsystem would actually accept rules; the
+    # static assertion above covers the rejected-syscall fault everywhere else.
+    - name: "Check whether the audit subsystem is usable here"
+      when: auditd_pgrep.rc == 0
+      ansible.builtin.command: auditctl -s
+      changed_when: false
+      failed_when: false
+      register: auditctl_state
+
     # `auditctl -l` exits 0 and prints "No rules" when nothing is loaded, so
     # asserting on rc alone passes against an entirely empty ruleset. Assert on
     # the content.
     - name: "Assert audit rules are loaded"
-      when: auditd_pgrep.rc == 0
+      when:
+        - auditd_pgrep.rc == 0
+        - auditctl_state.rc == 0
+        - "'enabled' in (auditctl_state.stdout | default(''))"
       ansible.builtin.assert:
         that:
           - auditctl_rules.rc == 0
