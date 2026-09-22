@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Two audit rules named syscalls that do not exist on x86_64, and that took
+  the rest of the ruleset down with them.** `linux_auditing_ubuntu` and
+  `linux_auditing_rhel9` both emitted `-S umount,umount2` and
+  `-S adjtimex,settimeofday,stime`. Neither `umount` nor `stime` is an x86_64
+  syscall, and `augenrules --load` does not skip a rule it cannot parse: it
+  aborts at that line. Every rule after it, *including the closing `-e 2` that
+  makes the ruleset immutable*, was therefore never loaded. A hardened host ran
+  a fraction of the rules the benchmark asks for and stayed mutable, which is
+  the opposite of what the role reports.
+
+- **Nothing would have noticed.** The roles never ran `augenrules --load` at
+  all; they wrote the file and notified a `Restart auditd` handler that carries
+  `failed_when: false`, and auditd's own `ExecStartPost` carries a leading `-`.
+  Three layers each turned the failure into a success. The roles now load the
+  ruleset explicitly and fail on a rejected rule, while still treating an
+  already-immutable ruleset (`enabled 2`) as the configured end state rather
+  than an error, reporting that the change applies at the next reboot.
+
+- **The test asserted something that could not fail.** Verification checked only
+  that `auditctl -l` exited 0, and it exits 0 while printing `No rules`, so it
+  passed against an empty ruleset. It now asserts on content, and a separate
+  static assertion rejects any rendered ruleset naming `umount` or `stime` so
+  the class of fault is caught even in containers where no rules can load.
+
 ## [3.5.3]: 2026-08-29
 
 ### Reverted

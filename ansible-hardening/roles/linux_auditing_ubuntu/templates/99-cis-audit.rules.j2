@@ -40,7 +40,12 @@
 
 {% if linux_audit_rules_mounts | bool %}
 -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=unset -k mounts
--a always,exit -F arch=b64 -S umount,umount2 -F auid>=1000 -F auid!=unset -k mounts
+# `umount` is not a syscall on x86_64; only `umount2` is. Naming it makes
+# `augenrules --load` abort on this line, so every rule after it -- including
+# the closing `-e 2` -- is never loaded and the host silently keeps a partial,
+# mutable ruleset. auditd's ExecStartPost carries a leading `-`, so the unit
+# still reports success and nothing surfaces the failure.
+-a always,exit -F arch=b64 -S umount2 -F auid>=1000 -F auid!=unset -k mounts
 {% endif %}
 
 {% if linux_audit_rules_actions | bool %}
@@ -73,7 +78,9 @@
 {% endif %}
 
 {% if linux_audit_rules_time | bool %}
--a always,exit -F arch=b64 -S adjtimex,settimeofday,stime -k time-change
+# `stime` was removed from Linux and does not exist on x86_64. Same failure
+# mode as the umount rule above: it aborts the load at this line.
+-a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change
 -a always,exit -F arch=b64 -S clock_settime -k time-change
 {% endif %}
 
