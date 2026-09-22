@@ -202,7 +202,13 @@
     - "'enabled 2' not in (_linux_auditd_state.stdout | default(''))"
   ansible.builtin.command: "augenrules --load"
   register: "_linux_auditd_load"
-  changed_when: "'No change' not in (_linux_auditd_load.stdout | default(''))"
+  # A load that did not load anything changed nothing. Keying this on stdout
+  # alone reported `changed` on every run wherever the load fails -- stdout is
+  # empty, so "No change" is trivially absent -- which broke idempotence in a
+  # container. Require the command to have actually succeeded first.
+  changed_when:
+    - "_linux_auditd_load.rc == 0"
+    - "'No change' not in (_linux_auditd_load.stdout | default(''))"
   failed_when: false
 
 # Two different things make this exit non-zero and they deserve different
