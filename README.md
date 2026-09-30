@@ -1,5 +1,7 @@
 # aartool
 
+![aartool demo: an audit turned into attack chains, with the safe link to cut in each](docs/media/aartool-demo.gif)
+
 **Audit a Linux host, get an ordered plan, understand any finding, apply the
 fix, and prove afterwards that only what you intended changed.**
 
