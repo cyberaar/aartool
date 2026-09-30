@@ -1,6 +1,6 @@
 # aartool
 
-![aartool demo: an audit turned into attack chains, with the safe link to cut in each](docs/media/aartool-demo.gif)
+![aartool paths on a sample audit: three complete attack chains, the count of open findings at each stage, and the one link to cut in each, followed by aartool explain on that link](docs/media/aartool-paths.gif)
 
 **Audit a Linux host, get an ordered plan, understand any finding, apply the
 fix, and prove afterwards that only what you intended changed.**
