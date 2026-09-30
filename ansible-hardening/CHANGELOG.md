@@ -43,6 +43,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`paths` named a link to cut that aartool cannot cut.** The selector used
+  "not costly" as a proxy for "there is something to do", and those are
+  different properties. On a real host the front-door chain printed
+  `cut  INT-04  Open listening ports`, while `explain INT-04` says, in as many
+  words, "Nothing. This check is deliberately not mapped to a role". The most
+  prominent line the command prints was advice nobody could act on. A cut
+  candidate now has to be actionable as well as safe, using the same predicate
+  `explain` uses to choose that branch: a written entry, or a remediation map
+  line. That deliberately keeps KRN-12 and LOG-08, which carry no map entry but
+  do carry a written entry naming a real command. Where no link qualifies, the
+  view now distinguishes "every open link here needs a decision first" from "no
+  open link here is a configuration change" instead of printing the first and
+  meaning the second. The bundled sample never showed this, because every cut
+  it happens to name is actionable; it was found by running the loop on a real
+  machine before tagging.
+
 - **`paths` exit 1 meant both "a chain is complete" and "I could not read the
   report".** A gate with `fail-on-chain: false` therefore passed a report the
   tool had failed to parse. Unreadable and missing reports now exit 2, the
