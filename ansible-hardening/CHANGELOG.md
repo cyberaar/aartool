@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release's `SHA256SUMS` covered two assets out of five, and the release
+  notes told people to verify against it.** `packages.yml` uploads `dist/*`
+  with `--clobber`, and `dist/` carries its own `SHA256SUMS` listing only the
+  `.deb` and the `.rpm`, so it replaced the file attached by hand covering
+  `aartool`, `aartool-baseline.sh` and the collection tarball. v3.5.3 shipped
+  this way too: six assets, two checksums. A checksum file that covers some of
+  the assets is worse than none, because it invites a reader to verify and
+  then says nothing about the file they actually downloaded. The job now merges
+  the two lists rather than replacing one with the other, normalises
+  `sha256sum`'s `./name` and bare-name forms so `sha256sum -c` works for
+  someone who downloaded everything into one directory, and then fails the
+  build if any published asset is left without a checksum. v3.6.0's file was
+  repaired by hand after the release; the merge logic was checked against that
+  same data and reproduces it exactly.
+
 ## [3.6.0]: 2026-09-30
 
 ### Added

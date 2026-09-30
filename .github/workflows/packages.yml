@@ -77,7 +77,57 @@ jobs:
           name: aartool-packages
           path: dist
 
+      # dist/ carries its own SHA256SUMS covering the .deb and the .rpm, and
+      # uploading it with --clobber replaced the one attached by hand, which
+      # covers aartool, aartool-baseline.sh and the collection tarball. The
+      # release notes tell people to verify against SHA256SUMS, and on v3.5.3
+      # and v3.6.0 that file listed two of the release's assets and said
+      # nothing about the other three. Merge the two instead of replacing one
+      # with the other.
+      - name: Merge the package checksums into the release's SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          cd dist
+          [[ -s SHA256SUMS ]] || { echo "dist/SHA256SUMS is missing or empty"; exit 1; }
+          # sha256sum writes ./name here and bare names elsewhere. One shape,
+          # or `sha256sum -c` fails for a reader who downloaded everything
+          # into one directory.
+          sed -i 's|  \./|  |' SHA256SUMS
+          if gh release download "$TAG" -p SHA256SUMS -D existing --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+            sed -i 's|  \./|  |' existing/SHA256SUMS
+            # Package lines win on a collision: this run just built them.
+            awk 'NR==FNR { seen[$2]=1; print; next } !($2 in seen)' \
+              SHA256SUMS existing/SHA256SUMS > merged
+            mv merged SHA256SUMS
+          fi
+          sort -k2 -o SHA256SUMS SHA256SUMS
+          echo "SHA256SUMS now covers:"
+          awk '{ print "  " $2 }' SHA256SUMS
+
       - name: Upload to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
+      # A release whose SHA256SUMS does not cover every asset is worse than
+      # one with no SHA256SUMS at all: it invites a reader to verify, and then
+      # silently says nothing about the file they actually downloaded.
+      - name: Every asset is covered by SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          assets=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+                   --json assets -q '.assets[].name' | grep -v '^SHA256SUMS$' | sort)
+          covered=$(awk '{ print $2 }' dist/SHA256SUMS | sed 's|^\./||' | sort)
+          missing=$(comm -23 <(printf '%s\n' "$assets") <(printf '%s\n' "$covered"))
+          if [[ -n "$missing" ]]; then
+            echo "these release assets have no checksum:"
+            printf '  %s\n' $missing
+            exit 1
+          fi
+          echo "all $(wc -l <<<"$assets") assets covered"
