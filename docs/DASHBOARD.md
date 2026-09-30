@@ -9,6 +9,7 @@ the person who ran the scan. Panels, in the order an auditor asks the questions:
 | panel | the question it answers |
 |---|---|
 | Stat row | How big is this estate, how is it doing, how much is outstanding |
+| **Attack paths** | Which chains an attacker can walk end to end, on how many hosts, and the smallest change that breaks each. The same chains and logic as `aartool paths` over several reports |
 | **Score by host** | Which machine do I open first. Sorted worst first, click to open |
 | Where the findings are | Which area is weak across the whole estate, not just one host |
 | **Fix once, help most hosts** | Which single finding, fixed once, clears the most machines |
@@ -34,6 +35,7 @@ document covers using the dashboard by hand.
 |---|---|
 | Fleet score | A gauge and the number, given more room than anything else on the page because it is the one figure a reader repeats afterwards |
 | Stat row | FAIL / WARN / PASS, how many hosts are below 60, how many findings need a decision |
+| Attack paths | Four chains (front door, local climb, silent tenant, pivot) drawn as stage pipelines. A stage is shaded by how many of the hosts shown have it open, a chain is **Complete on N of M** when every stage is open, and the smallest set of findings whose closure breaks it on all of those hosts is listed with a chip per affected host. Mirrored from `aartool paths`; a guard fails the build if the two drift |
 | Score by host | One row per host, worst first: name, score, failure counts, a threshold-coloured bar and a **View details** button. Selecting it opens everything about that machine |
 | How exposed is the estate | Open findings distributed across the four reachability waves. A tall wave 1 means exposure from outside; a tall wave 3 means you would not find out if there were |
 | Estate heatmap | Hosts down, categories across. A red **column** is a policy problem across the fleet, a red **row** is one bad machine. Select any cell to open that host |
