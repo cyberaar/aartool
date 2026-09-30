@@ -555,6 +555,43 @@ for _band in "95 #4c1" "80 #97ca00" "55 #dfb317" "10 #e05d44"; do
   check "badge colour for score $1" "$(cat "$_bdir/s.svg" 2>/dev/null)" "$2"
 done
 rm -rf "$_bdir"
+
+# A report that has been through jq, or any other JSON tool, is still a valid
+# report. The record split was a literal '},{' and the field greps required no
+# space after the colon, so a pretty-printed report came back as ONE record
+# whose "id" grep returned every id at once:
+#
+#   paths   -> ST["<many lines>"]: bad array subscript, no output, EXIT 0
+#   advise  -> "Nothing open in this report. Every check passed." on a 62%
+#              report carrying 11 failures
+#
+# Exit 0 is documented as "no complete attack chain", so a CI gate went green
+# on a report the tool had failed to read, and advise gave the reassuring
+# answer to a question it could not answer. Both are CLAUDE.md 4.6: "could not
+# read it" must never share a code path with "the answer is no".
+_jdir=$(mktemp -d)
+if command -v jq >/dev/null 2>&1; then
+  jq . "$_fx" > "$_jdir/pretty.json" 2>/dev/null
+  _p_flat=$($AARTOOL paths "$_fx" 2>/dev/null | grep -c COMPLETE || true)
+  _p_pretty=$($AARTOOL paths "$_jdir/pretty.json" 2>/dev/null | grep -c COMPLETE || true)
+  check_exact "paths reads a pretty-printed report the same as a flat one" \
+    "$_p_pretty" "$_p_flat"
+  _a_pretty=$($AARTOOL advise "$_jdir/pretty.json" 2>&1)
+  check_exact "advise does not call a pretty-printed report all green" \
+    "$(grep -c 'Every check passed' <<<"$_a_pretty")" "0"
+  check "advise still finds the findings in a pretty-printed report" "$_a_pretty" "Wave 1"
+else
+  check_exact "jq is needed to prove the pretty-report parse" "jq missing" "jq present"
+fi
+
+# And when a report genuinely cannot be parsed, the exit code must not say
+# "clean". Renaming the key the results array is anchored on is the honest
+# unreadable case.
+sed 's/"ansible_remediation"/"XX_no_such_key"/' "$_fx" > "$_jdir/broken.json"
+$AARTOOL paths "$_jdir/broken.json" >/dev/null 2>&1
+check_exact "paths on an unreadable report does not exit 0" "$?" "1"
+rm -rf "$_jdir"
+
 check "demo runs without root and shows the loop" "$($AARTOOL demo 2>&1)" "Now the real thing"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

@@ -147,7 +147,7 @@ cmd_advise() {
   # no real report at all. Hence \s* here, and a real report as the fixture.
   local records; records=$(tr -d '\n' < "$report" \
     | grep -oP '"results":\s*\[\K.*?(?=\]\s*,\s*"ansible_remediation")' \
-    | sed 's/},{/}\n{/g')
+    | sed 's/}[[:space:]]*,[[:space:]]*{/}\n{/g')
   [[ -n "$records" ]] || die "Could not read any results out of $report."
 
   local host score
@@ -165,9 +165,9 @@ cmd_advise() {
   while IFS= read -r rec; do
     [[ -n "$rec" ]] || continue
     local id st ck
-    id=$(grep -oP '"id":"\K[^"]*'     <<<"$rec" || true)
-    st=$(grep -oP '"status":"\K[^"]*' <<<"$rec" || true)
-    ck=$(grep -oP '"check":"\K[^"]*'  <<<"$rec" || true)
+    id=$(grep -oP '"id":\s*"\K[^"]*'     <<<"$rec" || true)
+    st=$(grep -oP '"status":\s*"\K[^"]*' <<<"$rec" || true)
+    ck=$(grep -oP '"check":\s*"\K[^"]*'  <<<"$rec" || true)
     [[ "$st" == "FAIL" || "$st" == "WARN" ]] || continue
     total_open=$((total_open+1))
 

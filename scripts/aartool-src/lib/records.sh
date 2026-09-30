@@ -5,18 +5,33 @@
 # Print "ID|STATUS|CHECK" for every result in a report.
 report_records() {
   local report="$1" recs
+  # The split tolerates whitespace between records. It used to be a literal
+  # '},{', which only matches what aartool-baseline.sh happens to emit: a
+  # report that had been through jq, or any other JSON tool, came back as ONE
+  # record whose "id" grep returned every id at once. paths then asked bash for
+  # ST["<many lines>"] and got 'bad array subscript', printed nothing, and
+  # exited 0. Exit 0 is documented as "no complete attack chain", so a CI gate
+  # went green on a report the tool had failed to read.
   recs=$(tr -d '\n' < "$report" \
     | grep -oP '"results":\s*\[\K.*?(?=\]\s*,\s*"ansible_remediation")' \
-    | sed 's/},{/}\n{/g') || true
+    | sed 's/}[[:space:]]*,[[:space:]]*{/}\n{/g') || true
   [[ -n "$recs" ]] || return 1
-  local rec id st ck
+  local rec id st ck n=0
   while IFS= read -r rec; do
     [[ -n "$rec" ]] || continue
-    id=$(grep -oP '"id":"\K[^"]*'     <<<"$rec" || true)
-    st=$(grep -oP '"status":"\K[^"]*' <<<"$rec" || true)
-    ck=$(grep -oP '"check":"\K[^"]*'  <<<"$rec" || true)
+    id=$(grep -oP '"id":\s*"\K[^"]*'     <<<"$rec" | head -1 || true)
+    st=$(grep -oP '"status":\s*"\K[^"]*' <<<"$rec" | head -1 || true)
+    ck=$(grep -oP '"check":\s*"\K[^"]*'  <<<"$rec" | head -1 || true)
+    # A record with no id is not a record. Emitting it puts an empty key into
+    # the caller's associative array, which is a fatal bash error, and dropping
+    # it silently would under-report. Refuse the whole parse instead.
+    [[ -n "$id" ]] || return 1
+    n=$((n+1))
     printf '%s|%s|%s\n' "$id" "$st" "$ck"
   done <<<"$recs"
+  # One record out of a real audit means the split did not split. Better to say
+  # so than to report on a single finding as if it were the whole machine.
+  [[ $n -ge 2 ]] || return 1
 }
 
 # Newest report aartool inspect wrote, from the same pool advise searches.

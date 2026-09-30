@@ -11,24 +11,39 @@
 # chain is COMPLETE when every stage is open: that is the one to read first.
 
 # CHAIN|name|intro, then STAGE|label|why|ID,ID,... lines.
+#
+# Membership is a claim about cause, not about topic. A stage is only honest if
+# every ID in it can, on its own, make that stage true. Two rules follow, and
+# both were broken when these chains were first written:
+#
+#  - A finding that makes an EARLIER stage easier does not belong to a later
+#    one. "No account lockout policy" and "password min length too short" sat
+#    under "turn the account into root", where neither has any effect. On a
+#    container with no passwordless sudo and no extra UID 0 account, that stage
+#    still opened on those two and the tool declared internet-to-root COMPLETE.
+#    A false COMPLETE is not a harmless over-warning: it is the number in the
+#    exit code and the thing a CI gate fails on.
+#  - A stage must not be a restatement of the chain's own premise. "Have a
+#    local shell" in a chain whose intro already assumes any foothold cannot be
+#    opened by findings that do not widen who gets one.
 _paths_chains() {
   cat <<'CHAINS'
 CHAIN|The front door: internet to root|An anonymous attacker, a wordlist and patience.
-STAGE|Reach a login|SSH answers the network and nothing filters who asks|NET-01,SSH-02,SSH-01
-STAGE|Guess without being stopped|Unlimited attempts and nothing bans the source|SSH-03,INT-06
-STAGE|Turn the account into root|A shell that can sudo without a password is already root|AUTH-05,AUTH-09,AUTH-04
+STAGE|Reach a login|The host answers the network and nothing filters who asks|NET-01,INT-04
+STAGE|Guess without being stopped|Passwords are accepted, attempts are unlimited and nothing bans the source|SSH-02,SSH-03,INT-06,AUTH-09,AUTH-04,AUTH-14
+STAGE|Land as root, or become it|The account reached is root, or becomes root without a password|SSH-01,AUTH-05,AUTH-11
 CHAIN|The local climb: any shell to root|A stolen key, a web-app RCE, a compromised CI job. Any foothold.
-STAGE|Have a local shell|Password logins and forwarding widen who can get one|SSH-02,SSH-04,AUTH-05
-STAGE|Find a kernel doorway|One unprivileged-only bug is enough, and these are the doors|KRN-01,KRN-03,KRN-12,KRN-10
+STAGE|More ways to get that foothold|Password logins and dormant accounts widen who can land one|SSH-02,AUTH-06
+STAGE|Find a kernel doorway|One unprivileged-only bug is enough, and these are the doors|KRN-01,KRN-02,KRN-03,KRN-04,KRN-12
 STAGE|Nothing contains the exploit|No MAC policy, so root is root|SYS-04
 CHAIN|The silent tenant: root to never found|What happens after root, and why you would not hear about it.
 STAGE|Persist below the OS|Modules and kexec load code the OS never vouched for|KRN-05,KRN-06,KRN-08,SYS-08
 STAGE|Nobody is recording|No audit trail, so nothing to replay|LOG-01,LOG-06,LOG-02
-STAGE|Nobody would notice a change|No integrity monitor, no off-box logs|INT-01,INT-02,LOG-08
+STAGE|Nobody would notice a change|No integrity baseline, and no copy of the logs off the box|INT-01,INT-07,INT-02,LOG-08
 CHAIN|The pivot: one box to the next|How a compromised host becomes a stepping stone.
 STAGE|Tunnel out through it|Forwarding lets the host relay for an attacker|SSH-04,NET-02
-STAGE|Spoof or redirect on the wire|Redirects and martians accepted, and unlogged|NET-07,NET-10,NET-08
-STAGE|No default-deny on the way out|Nothing constrains where the host may talk|NET-01,NET-13
+STAGE|Spoof or redirect on the wire|Redirects and router advertisements accepted, and unlogged|NET-07,NET-10,NET-13,NET-08
+STAGE|No default-deny on the way out|Nothing constrains where the host may talk|NET-01
 CHAINS
 }
 
