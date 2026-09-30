@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.6.0]
+## [Unreleased]
+
+## [3.6.0]: 2026-09-30
 
 ### Added
 
@@ -76,28 +78,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declaration order and the front door appeared at the bottom. The generator
   emits the last chain first to compensate.
 
-### Changed
-
-- **`paths` opens on one screen, and the stage-by-stage list moved behind
-  `--detail`.** The full view is sixty lines for three chains: the right depth
-  for someone already working a chain, and the wrong first thing to meet,
-  because it buries the answer to "am I exposed, and what do I do about it".
-  The default now prints the verdict, one pipeline per complete chain with the
-  count of open findings at each stage, and the link to cut; broken chains
-  follow as one line naming the stage that is closed. It sizes itself to the
-  terminal, commits to one layout for the whole screen rather than mixing two,
-  and falls back to ASCII glyphs outside a UTF-8 locale. Both views read the
-  same chain definitions and the same statuses, so they cannot disagree about
-  which chains are complete. `aartool demo` shows the new view, since it calls
-  `paths`. `--all` now only affects `--detail`: the default always lists the
-  broken chains.
-- The baseline script's remediation strings are English throughout
-  (`SCRIPT_VERSION` 4.8.4). Scores are unaffected.
-
-## [Unreleased]
-
-### Fixed
-
 - **Two audit rules named syscalls that do not exist on x86_64, and that took
   the rest of the ruleset down with them.** `linux_auditing_ubuntu` and
   `linux_auditing_rhel9` both emitted `-S umount,umount2` and
@@ -121,6 +101,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passed against an empty ruleset. It now asserts on content, and a separate
   static assertion rejects any rendered ruleset naming `umount` or `stime` so
   the class of fault is caught even in containers where no rules can load.
+
+### Changed
+
+- **`paths` opens on one screen, and the stage-by-stage list moved behind
+  `--detail`.** The full view is sixty lines for three chains: the right depth
+  for someone already working a chain, and the wrong first thing to meet,
+  because it buries the answer to "am I exposed, and what do I do about it".
+  The default now prints the verdict, one pipeline per complete chain with the
+  count of open findings at each stage, and the link to cut; broken chains
+  follow as one line naming the stage that is closed. It sizes itself to the
+  terminal, commits to one layout for the whole screen rather than mixing two,
+  and falls back to ASCII glyphs outside a UTF-8 locale. Both views read the
+  same chain definitions and the same statuses, so they cannot disagree about
+  which chains are complete. `aartool demo` shows the new view, since it calls
+  `paths`. `--all` now only affects `--detail`: the default always lists the
+  broken chains.
+- The baseline script's remediation strings are English throughout
+  (`SCRIPT_VERSION` 4.8.4). Scores are unaffected.
 
 ## [3.5.3]: 2026-08-29
 
