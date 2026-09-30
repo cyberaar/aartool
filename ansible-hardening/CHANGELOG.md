@@ -58,6 +58,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   meaning the second. The bundled sample never showed this, because every cut
   it happens to name is actionable; it was found by running the loop on a real
   machine before tagging.
+- **The published collection tarball carried things that were never meant to
+  leave the machine that built it.** `build_ignore` had four entries and not
+  one of them worked: the patterns are fnmatch against paths relative to the
+  collection root, and a trailing slash matches nothing, so `molecule/` never
+  matched the molecule directory, `tests/` names a directory that does not
+  exist, and `.github/` is at the repository root and was never inside the
+  collection. Nothing was ever excluded, so every release shipped the Molecule
+  scenarios, `.ansible-lint` and `requirements-dev.txt`.
+  Worse on the GitHub release page specifically: because the release process
+  attaches a tarball built **by hand**, v3.5.3's asset also carried whatever
+  was untracked in that working directory. That was a vendored copy of the
+  collection under `.ansible` (847 entries, half the artifact), a stale
+  `bantou96-hardening-1.9.0.tar.gz` from before the rename, the operator's real
+  inventory naming real hosts, and a real audit report of a real machine under
+  `reports/`. An audit report is a list of a machine's weaknesses, and
+  publishing one in a release artifact is the exact thing this project tells
+  other people not to do.
+  Both artifacts were downloaded and compared rather than reasoned about: the
+  **Ansible Galaxy copy is clean** of all four, because `galaxy-publish` builds
+  on a fresh runner, and Galaxy is the channel that cannot be withdrawn. The
+  exposure is the GitHub release asset, which can be replaced.
+  Fixed, and 3.6.0's tarball is 659 entries and 196K against 3.5.3's 1680 and
+  4.0MB. `scripts/tests/test_collection_build.sh` now asserts the top level
+  against an allowlist rather than a denylist, because the failure mode was
+  unknown files appearing, and it runs both on any change under
+  `ansible-hardening/` and as the last gate before `galaxy-publish`, where a
+  version cannot be withdrawn once it is out.
 
 - **`paths` exit 1 meant both "a chain is complete" and "I could not read the
   report".** A gate with `fail-on-chain: false` therefore passed a report the
