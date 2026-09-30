@@ -702,3 +702,28 @@ score (red under 50, amber to 74, green to 89, bright green from 90) and prints
 the Markdown to embed it. `aartool demo` runs `advise`, `paths` and `explain`
 on a bundled sample audit: no root, no SSH, nothing read from the machine.
 
+
+## export, and the GitHub Action
+
+`aartool export [REPORT.json] --format sarif|prometheus [--out FILE]` writes an
+audit in a format other tools read. SARIF 2.1.0 carries one result per open
+check (FAIL is an error, WARN a warning), which GitHub code scanning and most CI
+security tabs ingest. The Prometheus text format carries the score, the counts
+per status and a `aartool_check_open` sample per open check, for node_exporter's
+textfile collector.
+
+An empty or unreadable report is an error, not an empty export: a SARIF file
+with no results reads as clean, which is the wrong answer to give for a report
+that could not be read.
+
+`action.yml` at the repository root wraps the same steps for a workflow: audit
+the runner, write `aartool.sarif`, run `aartool paths`, and fail the job while an
+attack chain is complete (`fail-on-chain: "false"` reports without failing).
+Uploading the SARIF file is left to `github/codeql-action/upload-sarif`, so you
+control the category and the permissions.
+
+```yaml
+- uses: cyberaar/aartool@main
+- uses: github/codeql-action/upload-sarif@v3
+  with: { sarif_file: aartool.sarif }
+```

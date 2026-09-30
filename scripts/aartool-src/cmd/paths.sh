@@ -61,6 +61,11 @@ Options:
 Exit codes:
   0   no complete attack chain
   1   at least one chain is complete end to end (useful as a CI gate)
+  2   the report could not be read, so neither answer was reached
+
+Two is separate from one on purpose, and `diff` uses the same convention. A
+gate that treats "I could not read it" as "nothing is wrong" is the failure
+this command exists to prevent.
 
 With no argument it uses the newest report `inspect` wrote. Read-only.
 EOF
@@ -128,11 +133,21 @@ cmd_paths() {
       *)         report="$1"; shift ;;
     esac
   done
-  report="$(report_resolve "$report")"
+  # A command in an `if` condition is exempt from set -e, so the die inside
+  # report_resolve reaches us as a false condition rather than killing the
+  # script with 1. "No such report" is the same class as "cannot parse it":
+  # the question was never answered, so it is 2, not 0 and not 1.
+  if ! report="$(report_resolve "$report")"; then
+    return 2
+  fi
 
   local -A ST=() CK=()
   local id st ck recs
-  recs="$(report_records "$report")" || die "Could not read any results out of $report."
+  if ! recs="$(report_records "$report")"; then
+    printf '%s[ERROR]%s %s\n' "$RED" "$RESET" \
+      "Could not read any results out of $report. Exit 2: this is not 'no chain is complete'." >&2
+    return 2
+  fi
   while IFS='|' read -r id st ck; do
     ST["$id"]="$st"; CK["$id"]="$ck"
   done <<<"$recs"

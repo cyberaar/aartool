@@ -206,7 +206,10 @@ if [[ -f "$_rep_src" ]]; then
   _d_after="$(mktemp -t aartool-after-XXXXXX.json)"
   python3 - "$_rep_src" "$_d_after" <<'PYEOF' 2>/dev/null
 import json, sys
-d = json.load(open(sys.argv[1])); b = d["cyberaar_baseline"]
+d = json.load(open(sys.argv[1]))
+# The root key is "aartool" now and "cyberaar_baseline" on older reports;
+# every reader accepts both, so a test that names one is a test of its own age.
+b = d.get("aartool") or d["cyberaar_baseline"]
 b["date"] = "2099-01-01 00:00:00"; b["score"] = (b.get("score") or 50) - 7
 for r in b["results"]:
     if r["id"] == "SSH-02": r["status"] = "FAIL"
@@ -543,14 +546,54 @@ print(' '.join(n for el in d.getElementsByTagName('*')
 PYEOF
 )" "none"
 rm -rf "$_bdir"
+# ── the demo sample is a real report, not a hand-built one ───────────────────
+# It used to be a byte-identical copy of the test fixture, carrying French
+# remediation text and five em dashes into a file the README points people at.
+# It is now a real audit of a partially hardened Ubuntu 22.04 container, with
+# only the hostname changed.
+#
+# This asserts the SHAPE the producer emits, per CLAUDE.md 4.4. Without it a
+# renderer change that breaks the parser can be papered over by editing the
+# sample, which is how a fixture stops being evidence of anything.
+check_exact "the demo sample has the producer's shape" "$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+root=[k for k in ('aartool','cyberaar_baseline') if k in d]
+if not root: print('no aartool root key'); raise SystemExit
+b=d[root[0]]
+missing=[k for k in ('host','date','score','results') if k not in b]
+if missing: print('missing in root: '+','.join(missing)); raise SystemExit
+if 'ansible_remediation' not in json.dumps(d): print('no ansible_remediation'); raise SystemExit
+if not b['results']: print('no results'); raise SystemExit
+bad=[r['id'] for r in b['results'] if not all(k in r for k in ('id','status','check'))]
+if bad: print('results missing fields: '+','.join(bad[:3])); raise SystemExit
+print('producer-shaped')" "$_fx" 2>&1)" "producer-shaped"
+
+# English only, and no em dashes. Both were true of the copy this replaced.
+check_exact "the demo sample carries no French text" "$(LC_ALL=C grep -c $'\xc3[\xa0\xa7\xa8\xa9\xaa\xae\xaf\xb4\xb9]' "$_fx" || true)" "0"
+check_exact "the demo sample carries no em dashes" "$(LC_ALL=C grep -c $'\xe2\x80\x94' "$_fx" || true)" "0"
+
+# It has to be a useful demo: paths only tells a story if some chains are
+# complete and at least one is not.
+_demo_chains=$($AARTOOL paths "$_fx" --all 2>&1)
+check "the demo sample shows a complete chain"  "$_demo_chains" "COMPLETE"
+check "the demo sample shows a broken chain too" "$_demo_chains" "broken"
+
 _bdir=$(mktemp -d)
 $AARTOOL badge "$_fx" --out "$_bdir/b.svg" >/dev/null 2>&1
-check "badge writes an svg with the score" "$(cat "$_bdir/b.svg" 2>/dev/null)" "38/100"
+_fx_score=$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1])); b=d.get('aartool') or d['cyberaar_baseline']
+print(b['score'])" "$_fx")
+check "badge writes an svg with the score" "$(cat "$_bdir/b.svg" 2>/dev/null)" "$_fx_score/100"
 # The colour bands: derive each report from the real fixture by changing only
 # the score, so the badge's parse is exercised on the producer's shape.
 for _band in "95 #4c1" "80 #97ca00" "55 #dfb317" "10 #e05d44"; do
   set -- $_band
-  sed "s/\"score\": 38/\"score\": $1/" "$_fx" > "$_bdir/s.json"
+  python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1])); b=d.get('aartool') or d['cyberaar_baseline']
+b['score']=int(sys.argv[3]); json.dump(d,open(sys.argv[2],'w'))" "$_fx" "$_bdir/s.json" "$1"
   $AARTOOL badge "$_bdir/s.json" --out "$_bdir/s.svg" >/dev/null 2>&1
   check "badge colour for score $1" "$(cat "$_bdir/s.svg" 2>/dev/null)" "$2"
 done
@@ -589,10 +632,63 @@ fi
 # unreadable case.
 sed 's/"ansible_remediation"/"XX_no_such_key"/' "$_fx" > "$_jdir/broken.json"
 $AARTOOL paths "$_jdir/broken.json" >/dev/null 2>&1
-check_exact "paths on an unreadable report does not exit 0" "$?" "1"
+check_exact "paths on an unreadable report does not exit 0" "$?" "2"
+$AARTOOL paths "$_jdir/no-such-file.json" >/dev/null 2>&1
+check_exact "paths on a missing report exits 2, not 1"      "$?" "2"
+# 1 is the SIGNAL, 2 is the absence of one, and the action keys on the
+# difference: fail-on-chain: false may ignore a 1, never a 2. diff already
+# uses this convention.
+$AARTOOL paths "$_fx" >/dev/null 2>&1
+check_exact "paths on a readable report with a chain exits 1" "$?" "1"
+check "the paths help documents exit 2" "$($AARTOOL paths --help 2>&1)" "could not be read"
+# The action has to act on that difference, or the contract is decorative.
+check "action.yml fails the job on exit 2 whatever fail-on-chain says" \
+  "$(grep -A2 'rc.*-eq 2' ../action.yml)" "exit 2"
 rm -rf "$_jdir"
 
 check "demo runs without root and shows the loop" "$($AARTOOL demo 2>&1)" "Now the real thing"
+
+
+# ── export ───────────────────────────────────────────────────────────────────
+# Each case builds its own input from the real fixture; none borrows state.
+_edir=$(mktemp -d)
+_sarif=$($AARTOOL export "$_fx" --format sarif 2>&1)
+_nopen=$(python3 -c "import json,sys;print(len(json.loads(sys.stdin.read())['runs'][0]['results']))" <<<"$_sarif" 2>&1)
+# Exactly the open checks, no PASS leaking in. Counted from the sample, so
+# replacing the sample does not turn this into a stale number to chase.
+_fx_open=$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1])); b=d.get('aartool') or d['cyberaar_baseline']
+print(sum(1 for r in b['results'] if r['status'] in ('WARN','FAIL')))" "$_fx")
+check_exact "sarif has exactly the open checks as results" "$_nopen" "$_fx_open"
+check "sarif marks a FAIL as error" "$_sarif" '"level": "error"'
+# A hostname is attacker-influenced. Quote, backslash and newline must survive
+# as valid JSON and valid Prometheus label values.
+python3 - "$_fx" "$_edir/evil.json" <<'PY2'
+import json, sys
+d = json.load(open(sys.argv[1]))
+(d.get("aartool") or d["cyberaar_baseline"])["host"] = 'we"ird\\host\nname'
+json.dump(d, open(sys.argv[2], "w"))
+PY2
+_esarif=$($AARTOOL export "$_edir/evil.json" --format sarif 2>&1)
+check "sarif with a hostile hostname is valid JSON" \
+  "$(python3 -c "import json,sys;json.loads(sys.stdin.read());print('valid')" <<<"$_esarif" 2>&1)" "valid"
+_eprom=$($AARTOOL export "$_edir/evil.json" --format prometheus 2>&1)
+check "prometheus escapes the hostname quote" "$_eprom" 'host="we\"ird'
+check_exact "prometheus keeps every sample on one line" \
+  "$(grep -c '^aartool_score' <<<"$_eprom")" "1"
+# Empty results must be an error, not a clean-looking export.
+python3 - "$_fx" "$_edir/empty.json" <<'PY2'
+import json, sys
+d = json.load(open(sys.argv[1]))
+(d.get("aartool") or d["cyberaar_baseline"])["results"] = []
+json.dump(d, open(sys.argv[2], "w"))
+PY2
+_empty=$($AARTOOL export "$_edir/empty.json" --format sarif 2>&1); _erc=$?
+check "export refuses an empty report" "$_empty" "Refusing"
+check "export exits non-zero on an empty report" "rc=$_erc" "rc=1"
+check "export needs a format" "$($AARTOOL export "$_fx" 2>&1)" "--format"
+rm -rf "$_edir"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
