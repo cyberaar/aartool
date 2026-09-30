@@ -848,10 +848,8 @@ const CHAINS = [
         ids: ['SSH-01', 'AUTH-05', 'AUTH-11'] }
     ] },
   { name: "The local climb: any shell to root",
-    intro: "A stolen key, a web-app RCE, a compromised CI job. Any foothold.",
+    intro: "A stolen key, a web-app RCE, a compromised CI job. The foothold is the premise, not a finding.",
     stages: [
-      { label: "More ways to get that foothold", why: "Password logins and dormant accounts widen who can land one",
-        ids: ['SSH-02', 'AUTH-06'] },
       { label: "Find a kernel doorway", why: "One unprivileged-only bug is enough, and these are the doors",
         ids: ['KRN-01', 'KRN-02', 'KRN-03', 'KRN-04', 'KRN-12'] },
       { label: "Nothing contains the exploit", why: "No MAC policy, so root is root",
