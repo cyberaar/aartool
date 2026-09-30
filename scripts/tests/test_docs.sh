@@ -20,6 +20,15 @@ cd "$(dirname "$0")/.." || exit 1
 AARTOOL="./aartool"
 DOCS=(../README.md ../docs/AARTOOL.md ../docs/ANSIBLE.md ../docs/BASELINE.md ../docs/DASHBOARD.md ../docs/CONTAINER.md)
 
+# CLAUDE.md is gitignored, so it is checked only when a working copy has one.
+# It is added here because it was guarded by nothing and rotted accordingly:
+# it sat at "cyberaar-toolkit, v3.0.0, 21 roles" against a tree holding 52,
+# while every guarded document stayed correct. It is the first thing an agent
+# reads, so a stale one misinforms a whole session before any work starts.
+# Conditional on purpose: listing it unconditionally would fail CI, where the
+# file does not exist, since a missing entry in DOCS is a failure below.
+[[ -f ../CLAUDE.md ]] && DOCS+=(../CLAUDE.md)
+
 PASS=0 FAIL=0
 fail() { FAIL=$((FAIL+1)); printf 'FAIL  %s\n' "$*"; }
 ok()   { PASS=$((PASS+1)); }
@@ -54,6 +63,15 @@ for doc in "${DOCS[@]}"; do
 
     # Placeholders in a usage synopsis, not a real invocation.
     [[ "$cmd" == "<command>" || "$cmd" == \<* ]] && continue
+
+    # `aartool --help` and `aartool --version` are real invocations with no
+    # subcommand. Validate the option and move on, rather than reading it as a
+    # command name and reporting that --help is not a command.
+    if [[ "$cmd" == --* ]]; then
+      if [[ "$GLOBAL" == *" ${cmd%%=*} "* ]]; then ok
+      else fail "$(basename "$doc"): 'aartool $cmd' is not a global option"; fi
+      continue
+    fi
 
     if ! grep -qx -- "$cmd" <<<"$COMMANDS"; then
       # 'why' is a documented alias, and the dispatcher lists aliases nowhere.
@@ -98,7 +116,10 @@ for doc in "${DOCS[@]}"; do
   while read -r n; do
     [[ "$n" == "$ROLES_ON_DISK" ]] && ok \
       || fail "$(basename "$doc") says $n roles; there are $ROLES_ON_DISK on disk"
-  done < <(grep -oP '\b\K[0-9]+(?= (\w+ )?roles?\b)' "$doc" | sort -u)
+    # The qualifier class allows a hyphen: "52 CIS-aligned roles" was invisible
+    # to a \w-only class, so a count could sit in a guarded document unguarded,
+    # which is the exact rot this block exists to prevent.
+  done < <(grep -oP '\b\K[0-9]+(?= ([\w-]+ )?roles?\b)' "$doc" | sort -u)
 done
 
 CHECKS=$($AARTOOL explain --list 2>/dev/null | grep -c .)
@@ -156,8 +177,30 @@ done < <(
 # name_fr is still an argument to add_result and is no longer rendered
 # anywhere. Removing it means touching 256 call sites, which is a separate
 # mechanical change; this guard is about what a user sees.
+# The pattern matches the UTF-8 BYTES of the accented letters, with the locale
+# pinned so it means the same thing on every machine. The previous form,
+# a PCRE class of \x{00e9} and friends, changed meaning with the ambient locale:
+# under a UTF-8 locale those are code points, under LC_ALL=C they are single
+# bytes. In byte mode 0xEF matched the third byte of U+FE0F, the variation
+# selector in the "\u26a0\ufe0f" badge on line 25 of html.sh, so the guard
+# reported French text in a file that has never contained any. CI pins
+# LC_ALL=C.UTF-8 and never saw it; a developer without that set did.
+#
+# 0xC3 is the lead byte of every one of these letters in UTF-8 and can never
+# appear as a continuation byte, so no other character can produce a match.
+_FR_BYTES='\xc3[\xa0\xa7\xa8\xa9\xaa\xae\xaf\xb4\xb9]'   # a c e e e i i o u, accented
+
+# A guard that silently matches nothing is worse than no guard, and this one is
+# a pattern that could rot without anyone noticing. Prove it still fires.
+_fr_probe=$(printf 'r\xc3\xa9ussi\n' | LC_ALL=C grep -cP "$_FR_BYTES" || true)
+[[ "$_fr_probe" == "1" ]] && ok \
+  || fail "the French-text pattern no longer matches an accented letter; the guard below proves nothing"
+_fr_neg=$(printf '\xe2\x9a\xa0\xef\xb8\x8f WARN\n' | LC_ALL=C grep -cP "$_FR_BYTES" || true)
+[[ "$_fr_neg" == "0" ]] && ok \
+  || fail "the French-text pattern matches an emoji variation selector; it is back in byte mode"
+
 for f in src/checks/*.sh src/renderers/html.sh src/renderers/terminal.sh; do
-  n=$(grep -cP '[\x{00e9}\x{00e8}\x{00ea}\x{00e0}\x{00e7}\x{00f9}\x{00f4}\x{00ee}\x{00ef}]' "$f" 2>/dev/null || true)
+  n=$(LC_ALL=C grep -cP "$_FR_BYTES" "$f" 2>/dev/null || true)
   # name_fr keeps its accents until it is removed; count only lines that are
   # not an add_result argument list.
   if [[ "$f" == src/renderers/* && "$n" != "0" ]]; then
