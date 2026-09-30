@@ -689,6 +689,77 @@ check "export refuses an empty report" "$_empty" "Refusing"
 check "export exits non-zero on an empty report" "rc=$_erc" "rc=1"
 check "export needs a format" "$($AARTOOL export "$_fx" 2>&1)" "--format"
 rm -rf "$_edir"
+# ── paths: estate view and mermaid ───────────────────────────────────────────
+# Inputs are built from the real sample by changing only host and statuses.
+#
+# The statuses these cases depend on are set EXPLICITLY, open as well as
+# closed, rather than inherited from whatever the sample happens to carry. An
+# earlier version assumed the front door was complete because it was complete
+# in the sample of the day; replacing that sample with a host that has
+# PermitRootLogin no turned six assertions red while every one of them was
+# describing the tool correctly.
+_pdir=$(mktemp -d)
+python3 - "$_fx" "$_pdir" <<'PY2'
+import json, sys
+src = json.load(open(sys.argv[1]))
+def mk(name, host, close=(), open_=()):
+    d = json.loads(json.dumps(src)); b = d.get("aartool") or d["cyberaar_baseline"]; b["host"] = host
+    for r in b["results"]:
+        if r["id"] in close:
+            r["status"] = "PASS"
+        if r["id"] in open_:
+            r["status"] = "FAIL"
+    json.dump(d, open(f"{sys.argv[2]}/{name}.json", "w"))
+# SSH-01 open on every host, so the front-door escalation stage is open by
+# construction and "complete on 3 of 3" is a statement about the estate view
+# rather than about the sample.
+EVERYWHERE = ("SSH-01", "NET-01", "SSH-02")
+mk("a", "web-01", open_=EVERYWHERE)
+mk("b", "web-02", close=("SYS-04",), open_=EVERYWHERE)
+mk("c", "web-03", close=("SYS-04", "LOG-01", "LOG-06", "LOG-02"), open_=EVERYWHERE)
+mk("dup", "web-01", open_=EVERYWHERE)
+mk("evil", 'x"]\nend\n%% pwn')
+mk("evil2", 'we b<script>;x[1]')
+e = json.loads(json.dumps(src)); (e.get("aartool") or e["cyberaar_baseline"])["results"] = []
+json.dump(e, open(f"{sys.argv[2]}/empty.json", "w"))
+PY2
+check_exact "estate: the fixtures were actually built" \
+  "$(ls "$_pdir"/*.json 2>/dev/null | wc -l)" "7"
+
+_est=$($AARTOOL paths "$_pdir/a.json" "$_pdir/b.json" "$_pdir/c.json" 2>&1); _erc=$?
+check "estate: chain complete on every host"   "$_est" "COMPLETE on 3 of 3  The front door"
+check "estate: climb complete only where MAC is missing" "$_est" "COMPLETE on 1 of 3  The local climb"
+check "estate: silent tenant complete on two"  "$_est" "COMPLETE on 2 of 3  The silent tenant"
+check "estate: smallest change names the MAC finding" "$_est" "close SYS-04"
+check "estate: exits 1 when a chain is complete" "rc=$_erc" "rc=1"
+check "estate: refuses two reports for one host" \
+  "$($AARTOOL paths "$_pdir/a.json" "$_pdir/dup.json" 2>&1)" "same host 'web-01'"
+check "estate: refuses an empty report" \
+  "$($AARTOOL paths "$_pdir/a.json" "$_pdir/empty.json" 2>&1)" "Could not read any results"
+_mm=$($AARTOOL paths "$_pdir/c.json" --format mermaid 2>&1)
+# Mermaid stacks subgraphs in REVERSE declaration order under flowchart LR, so
+# the generator emits the last chain first to get the reading order the text
+# output uses. Verified by rendering with mermaid-cli and comparing the images.
+# If someone "fixes" the loop back to ascending, the diagram silently inverts
+# and nothing else notices, so assert the emission order directly.
+_mfirst=$($AARTOOL paths "$_pdir/a.json" --format mermaid 2>/dev/null | grep -oP '^  subgraph \KC[0-9]+' | head -1)
+_mlast=$($AARTOOL paths "$_pdir/a.json" --format mermaid 2>/dev/null | grep -oP '^  subgraph \KC[0-9]+' | tail -1)
+check_exact "mermaid emits the last chain first, so it renders in reading order" \
+  "$_mfirst-$_mlast" "C3-C0"
+
+check "mermaid: starts a flowchart" "$_mm" "flowchart LR"
+check "mermaid: a fully closed stage is drawn closed" "$_mm" ']:::closed'
+check "mermaid: an open stage is drawn open" "$_mm" ']:::open'
+check "mermaid: a broken chain is labelled broken" "$_mm" "(broken)"
+_hostile=$($AARTOOL paths "$_pdir/evil.json" --format mermaid 2>&1)
+check_exact "mermaid: a hostile hostname adds no lines" \
+  "$(wc -l <<<"$_hostile")" "$(wc -l <<<"$($AARTOOL paths "$_pdir/a.json" --format mermaid 2>&1)")"
+# The quote case is cut short by the reader; this one reaches the sanitiser.
+check_exact "mermaid: a hostname keeps only safe characters" \
+  "$($AARTOOL paths "$_pdir/evil2.json" --format mermaid 2>&1 | head -1)" "%% aartool paths, host: webscriptx1"
+check "mermaid needs one report" \
+  "$($AARTOOL paths "$_pdir/a.json" "$_pdir/b.json" --format mermaid 2>&1)" "single report"
+rm -rf "$_pdir"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

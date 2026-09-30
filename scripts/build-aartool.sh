@@ -28,6 +28,7 @@ PARTS=(
   aartool-src/cmd/report.sh
   aartool-src/cmd/diff.sh
   aartool-src/cmd/paths.sh
+  aartool-src/cmd/paths_views.sh
   aartool-src/cmd/badge.sh
   aartool-src/cmd/demo.sh
   aartool-src/cmd/export.sh

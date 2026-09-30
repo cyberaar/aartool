@@ -32,8 +32,7 @@ CHAIN|The front door: internet to root|An anonymous attacker, a wordlist and pat
 STAGE|Reach a login|The host answers the network and nothing filters who asks|NET-01,INT-04
 STAGE|Guess without being stopped|Passwords are accepted, attempts are unlimited and nothing bans the source|SSH-02,SSH-03,INT-06,AUTH-09,AUTH-04,AUTH-14
 STAGE|Land as root, or become it|The account reached is root, or becomes root without a password|SSH-01,AUTH-05,AUTH-11
-CHAIN|The local climb: any shell to root|A stolen key, a web-app RCE, a compromised CI job. Any foothold.
-STAGE|More ways to get that foothold|Password logins and dormant accounts widen who can land one|SSH-02,AUTH-06
+CHAIN|The local climb: any shell to root|A stolen key, a web-app RCE, a compromised CI job. The foothold is the premise, not a finding.
 STAGE|Find a kernel doorway|One unprivileged-only bug is enough, and these are the doors|KRN-01,KRN-02,KRN-03,KRN-04,KRN-12
 STAGE|Nothing contains the exploit|No MAC policy, so root is root|SYS-04
 CHAIN|The silent tenant: root to never found|What happens after root, and why you would not hear about it.
@@ -53,10 +52,17 @@ aartool paths: how an attacker would actually chain your findings
 
 Usage:
   aartool paths [REPORT.json] [options]
+  aartool paths A.json B.json ...        estate view, one report per host
 
 Options:
-  --all        Also show chains that are broken (some stage fully closed)
-  -h, --help   This help
+  --all             Also show chains that are broken (some stage fully closed)
+  --format mermaid  Print the chains as a Mermaid diagram (one report only).
+                    GitHub, GitLab and most wikis render it in a code fence.
+  -h, --help        This help
+
+With several reports it shows, per chain, which hosts have it complete and the
+smallest set of findings whose closure breaks it on all of them. Two reports for
+the same host are refused: pass the newest per host.
 
 Exit codes:
   0   no complete attack chain
@@ -124,21 +130,32 @@ _paths_render() {
 }
 
 cmd_paths() {
-  local report="" show_all=0
+  local report="" show_all=0 fmt=""
+  local -a extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help) _paths_usage; return 0 ;;
       --all)     show_all=1; shift ;;
+      --format)  fmt="${2:-}"; [[ "$fmt" == "mermaid" ]] || die "--format takes mermaid."; shift 2 ;;
       -*)        die "Unknown option for paths: $1. Try 'aartool paths --help'." ;;
-      *)         report="$1"; shift ;;
+      *)         if [[ -z "$report" ]]; then report="$1"; else extra+=("$1"); fi; shift ;;
     esac
   done
+  if [[ ${#extra[@]} -gt 0 ]]; then
+    [[ -z "$fmt" ]] || die "--format mermaid draws one host. Pass a single report."
+    _paths_estate "$report" "${extra[@]}"
+    return $?
+  fi
   # A command in an `if` condition is exempt from set -e, so the die inside
   # report_resolve reaches us as a false condition rather than killing the
   # script with 1. "No such report" is the same class as "cannot parse it":
   # the question was never answered, so it is 2, not 0 and not 1.
   if ! report="$(report_resolve "$report")"; then
     return 2
+  fi
+  if [[ "$fmt" == "mermaid" ]]; then
+    _paths_mermaid "$report"
+    return $?
   fi
 
   local -A ST=() CK=()
