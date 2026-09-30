@@ -62,10 +62,40 @@ _paths_chain_complete() {
   return 0
 }
 
+# ── can this finding actually be cut? ────────────────────────────────────────
+# "Not costly" is not the same property as "there is something to do", and
+# using one for the other put unactionable advice on the most prominent line
+# the tool prints. On a real host the front-door chain said
+# `cut  INT-04  Open listening ports`, while `explain INT-04` says, in as many
+# words, "Nothing. This check is deliberately not mapped to a role". A cut has
+# to be an action someone can take.
+#
+# The predicate is the one explain uses to pick that branch: no written entry
+# and no remediation map line. It deliberately keeps KRN-12 and LOG-08, which
+# carry no map entry but do carry a written entry naming a real command.
+_paths_actionable() {
+  kb_has "$1" && return 0
+  [[ -n "$(_explain_map_line "$1")" ]] && return 0
+  return 1
+}
+
+# The map lives in the built baseline. If that file were missing, every check
+# would look unactionable and every cut line would quietly degrade to "nothing
+# here is a configuration change", which is the reassuring answer and the wrong
+# one. Fault instead.
+_paths_need_map() {
+  resolve_paths
+  [[ -r "$BASELINE" ]] \
+    || die "paths: cannot read the baseline at ${BASELINE:-<unset>}, so it cannot tell an actionable finding from an informational one."
+  grep -q 'ANSIBLE_MAP' "$BASELINE" \
+    || die "paths: the baseline at $BASELINE carries no remediation map, so no link can be judged actionable."
+}
+
 # ── estate ───────────────────────────────────────────────────────────────────
 _paths_estate() {
   local -a reports=("$@")
   _paths_load_chains
+  _paths_need_map
 
   local -a hosts=() ; local -a maps=()
   local r i host
@@ -126,9 +156,13 @@ _paths_estate() {
       if [[ $n -lt $best_n ]]; then best_n=$n; best="$u"; bl="${SG_LABEL[$s]}"; fi
     done
     printf '\n   %sSmallest change that breaks it on all %d:%s close %s\n' "$BOLD" "${#done_hosts[@]}" "$RESET" "$best"
-    local costly="" y
-    for y in $best; do _advise_costly "$y" && costly="$costly $y"; done
+    local costly="" inert="" y
+    for y in $best; do
+      _advise_costly "$y" && costly="$costly $y"
+      _paths_actionable "$y" || inert="$inert $y"
+    done
     [[ -n "$costly" ]] && printf '   %sneeds a decision first:%s%s  (aartool explain <ID>)\n' "$YELLOW" "$RESET" "$costly"
+    [[ -n "$inert" ]] && printf '   %snot a configuration change:%s%s  (aartool explain <ID>)\n' "$YELLOW" "$RESET" "$inert"
     printf '   %s(stage: %s)%s\n' "$CYAN" "$bl" "$RESET"
     unset union done_hosts
   done
@@ -266,6 +300,7 @@ _paths_tail() {
 _paths_compact() {
   local host="$1" report="$2"
   _paths_load_chains
+  _paths_need_map
   _paths_glyphs
   _paths_cols; local cols="$PATHS_COLS"
 
@@ -362,12 +397,15 @@ _paths_compact() {
       done
     fi
 
-    # The first open finding that is safe to apply blind, in stage order.
-    local cut="" y
+    # The first open finding that is safe to apply blind AND has something to
+    # apply, in stage order. Both halves matter: see _paths_actionable.
+    local cut="" y any_costly=0
     for ((i=0; i<n; i++)); do
       [[ -n "$cut" ]] && break
       for y in ${opn[i]}; do
-        _advise_costly "$y" || { cut="$y"; break; }
+        if _advise_costly "$y"; then any_costly=1; continue; fi
+        _paths_actionable "$y" || continue
+        cut="$y"; break
       done
     done
     if [[ -n "$cut" ]]; then
@@ -384,8 +422,10 @@ _paths_compact() {
       else
         printf '    %scut%s  %s%s%s\n' "$BOLD" "$RESET" "$YELLOW" "$cut" "$RESET"
       fi
-    else
+    elif [[ $any_costly -eq 1 ]]; then
       printf '    %severy open link here needs a decision first%s  (aartool advise)\n' "$BOLD" "$RESET"
+    else
+      printf '    %sno open link here is a configuration change%s  (aartool explain <ID>)\n' "$BOLD" "$RESET"
     fi
   done
   done

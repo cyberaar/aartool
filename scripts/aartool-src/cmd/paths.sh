@@ -105,7 +105,7 @@ _paths_render() {
   fi
   printf '  %s%s%s\n\n' "$CYAN" "$intro" "$RESET"
 
-  local cut=""
+  local cut="" _paths_any_costly=0
   for ((i=0; i<n; i++)); do
     if [[ -n "${open_ids[i]}" ]]; then
       printf '   %s[%d] %-32s open%s\n' "$RED" $((i+1)) "${_lbl[i]}" "$RESET"
@@ -115,7 +115,9 @@ _paths_render() {
       done
       if [[ -z "$cut" ]]; then
         for y in ${open_ids[i]}; do
-          _advise_costly "$y" || { cut="$y"; break; }
+          if _advise_costly "$y"; then _paths_any_costly=1; continue; fi
+          _paths_actionable "$y" || continue
+          cut="$y"; break
         done
       fi
     else
@@ -126,8 +128,10 @@ _paths_render() {
     if [[ -n "$cut" ]]; then
       printf '\n   %sA safe link to cut:%s %s  %s\n' "$BOLD" "$RESET" "$cut" "${CK[$cut]:-}"
       printf '   %saartool explain %s%s\n' "$CYAN" "$cut" "$RESET"
-    else
+    elif [[ ${_paths_any_costly:-0} -eq 1 ]]; then
       printf '\n   %sEvery open link here needs a decision first.%s  aartool advise\n' "$BOLD" "$RESET"
+    else
+      printf '\n   %sNo open link here is a configuration change.%s  aartool explain <ID>\n' "$BOLD" "$RESET"
     fi
   fi
 }
@@ -173,6 +177,7 @@ cmd_paths() {
     ST["$id"]="$st"; CK["$id"]="$ck"
   done <<<"$recs"
 
+  _paths_need_map
   local host; host=$(grep -oP '"host":\s*"\K[^"]*' "$report" | head -1 || true)
   if [[ $detail -eq 0 ]]; then
     _paths_compact "${host:-this host}" "$report"

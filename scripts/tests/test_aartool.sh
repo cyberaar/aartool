@@ -865,6 +865,74 @@ fi
 
 rm -rf "$_vdir"
 
+# ── paths: a cut has to be an action someone can take ────────────────────────
+# Found by running the loop on a real host before tagging 3.6.0, which is the
+# only reason it was found at all: on the bundled sample every cut happens to
+# be actionable. On that host the front-door chain printed
+# `cut  INT-04  Open listening ports`, and `explain INT-04` says "Nothing. This
+# check is deliberately not mapped to a role". The selector was using "not
+# costly" as a proxy for "there is something to do", and the two are different
+# properties.
+_adir=$(mktemp -d)
+python3 - "$_fx" "$_adir" <<'PY4'
+import json, sys
+src = json.load(open(sys.argv[1]))
+d = json.loads(json.dumps(src)); b = d.get("aartool") or d["cyberaar_baseline"]
+b["host"] = "front-door-01"
+# Complete the front door: stage 1 open on NET-01 (costly) and INT-04 (no
+# remediation of any kind), stage 2 on SSH-03 (a real, safe fix), stage 3 on
+# SSH-01. The only candidate stage 1 offers is the one nobody can act on, so a
+# selector that ignores actionability names INT-04 and a correct one reaches
+# SSH-03 in the next stage.
+open_ = {"NET-01", "INT-04", "SSH-03", "SSH-01"}
+for r in b["results"]:
+    if r["id"] in open_:
+        r["status"] = "FAIL"
+json.dump(d, open(f"{sys.argv[2]}/front-door.json", "w"))
+PY4
+
+_fd=$($AARTOOL paths "$_adir/front-door.json" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+check "the front-door fixture really completes that chain" "$_fd" "The front door"
+check_exact "an unactionable check is never named as the cut" \
+  "$(grep -c 'cut  INT-04' <<<"$_fd")" "0"
+check "the cut skips to the next stage and names a real fix" "$_fd" "cut  SSH-03"
+
+# The property, not just that one instance: every id this tool ever prints on a
+# cut line must be one `explain` has something to say about. Asserted across
+# both fixtures, with a floor so it cannot pass by finding no cut lines at all.
+_cuts=$( { $AARTOOL paths "$_fx" 2>&1; $AARTOOL paths "$_adir/front-door.json" 2>&1; } \
+        | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '^ +cut +[A-Z]+-[0-9]+' | awk '{print $2}' | sort -u)
+check_exact "the cut-line sweep found cuts to check" \
+  "$([[ $(wc -w <<<"$_cuts") -ge 3 ]] && echo enough || echo "only $(wc -w <<<"$_cuts")")" "enough"
+_inert=""
+for _c in $_cuts; do
+  # Captured, not piped into `grep -q`. This file runs under `set -o pipefail`,
+  # and grep -q closes the pipe on its first match, which SIGPIPEs explain; the
+  # pipeline then reports 141 and the match reads as a miss. Written that way
+  # first, and it made this guard pass against a cut line that was wrong.
+  _ex="$($AARTOOL explain "$_c" 2>&1)"
+  [[ "$_ex" == *"deliberately not mapped to a role"* ]] && _inert="$_inert $_c"
+done
+check_exact "no cut line names a check explain calls unactionable" "${_inert# }" ""
+
+rm -rf "$_adir"
+
+# A missing remediation map must fault, not quietly make every link look
+# unactionable: that is the reassuring answer and the wrong one.
+_bdir=$(mktemp -d)
+mkdir -p "$_bdir/ansible-hardening" "$_bdir/scripts"
+cp "$AARTOOL" "$_bdir/scripts/aartool"
+printf '#!/usr/bin/env bash\n# a baseline with no map in it\n' > "$_bdir/scripts/aartool-baseline.sh"
+# resolve_paths wants the whole layout before it will hand over a baseline path.
+printf '#!/usr/bin/env bash\n' > "$_bdir/scripts/run-hardening.sh"
+chmod +x "$_bdir/scripts/aartool-baseline.sh" "$_bdir/scripts/run-hardening.sh"
+cp "$_fx" "$_bdir/sample.json"
+_nomap=$(cd "$_bdir" && ./scripts/aartool paths sample.json 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+check "a baseline with no remediation map is a fault, not a clean answer" \
+  "$_nomap" "carries no remediation map"
+check_exact "and it does not print a view" "$(grep -c 'COMPLETE' <<<"$_nomap")" "0"
+rm -rf "$_bdir"
+
 # Without UTF-8 the view must not print a byte a serial console cannot draw.
 _ascii=$(LC_ALL=C LANG=C $AARTOOL paths "$_fx" 2>&1)
 check "the C locale still gets the view" "$_ascii" "COMPLETE"
