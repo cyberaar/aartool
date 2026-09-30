@@ -40,6 +40,12 @@ jobs:
           echo "version=$VERSION"    >> "$GITHUB_OUTPUT"
           echo "tarball=${NAMESPACE}-${NAME}-${VERSION}.tar.gz" >> "$GITHUB_OUTPUT"
 
+      # The last gate before an irrevocable publish: a Galaxy version cannot
+      # be withdrawn. v3.5.3 went out carrying the operator's real inventory
+      # and a real machine's audit report, and is still there.
+      - name: The collection tarball contains only what it should
+        run: bash scripts/tests/test_collection_build.sh
+
       - name: Build collection
         working-directory: ansible-hardening
         run: ansible-galaxy collection build --force

@@ -44,10 +44,32 @@ documentation: https://github.com/cyberaar/aartool/tree/main/ansible-hardening/d
 homepage: https://www.linkedin.com/company/cyberaar/
 issues: https://github.com/cyberaar/aartool/issues
 
+# fnmatch patterns, matched against paths relative to this directory. A
+# trailing slash matches nothing, so every entry in the previous list was a
+# no-op: `tests/` names a directory that does not exist, `.github/` is at the
+# repository root and was never inside the collection, and `molecule/` never
+# matched the molecule directory. Nothing was ever excluded.
+#
+# What that shipped, in v3.5.3 and every release before it: a vendored copy of
+# the collection under .ansible (847 entries, half the tarball), a stale
+# bantou96-hardening-1.9.0.tar.gz from before the rename, the Molecule
+# scenarios, the operator's real inventory naming real hosts, and a real
+# audit report of a real machine under reports/. An audit report is a list of
+# a machine's weaknesses; publishing one in a release artifact is the exact
+# thing this project tells other people not to do.
+#
+# The build also picked up untracked working-directory junk, so the artifact
+# depended on whatever happened to be lying around on the machine that built
+# it. test_collection_build.sh now asserts the top-level contents against an
+# allowlist, so a new stray directory fails the build instead of shipping.
 build_ignore:
+  - .ansible
+  - .ansible-lint
   - .gitignore
-  - tests/
-  - molecule/
-  - .github/
+  - molecule
+  - reports
+  - inventory/hosts
+  - requirements-dev.txt
+  - '*.tar.gz'
 
 ...

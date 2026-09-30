@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# What actually ends up in the published collection tarball.
+#
+# galaxy.yml's build_ignore had four entries and none of them worked. fnmatch
+# patterns are matched against paths relative to the collection root, and a
+# trailing slash matches nothing, so `molecule/` never matched the molecule
+# directory; `tests/` named a directory that does not exist; `.github/` is at
+# the repository root and was never inside the collection at all.
+#
+# So v3.5.3, published and also pushed to Ansible Galaxy where a version cannot
+# be withdrawn, shipped: a vendored copy of the collection under .ansible, a
+# stale bantou96-hardening-1.9.0.tar.gz from before the rename, the Molecule
+# scenarios, the operator's real inventory naming real hosts, and a real audit
+# report of a real machine. 1680 entries and 4.0MB, against 659 and 196K for
+# the same collection built correctly.
+#
+# The build also swept up untracked working-directory junk, which is the part
+# that makes a denylist the wrong shape here: the artifact depended on whatever
+# happened to be lying around on the machine that built it, so the next stray
+# directory would ship too. This asserts the top level against an ALLOWLIST.
+# Anything new has to be added here deliberately.
+#
+# Run: bash scripts/tests/test_collection_build.sh
+set -uo pipefail
+cd "$(dirname "$0")/../.." || exit 1
+
+PASS=0 FAIL=0
+ok()   { PASS=$((PASS + 1)); }
+bad()  { FAIL=$((FAIL + 1)); printf 'FAIL  %s\n' "$*"; }
+check_exact() {
+  local label="$1" got="$2" want="$3"
+  if [[ "$got" == "$want" ]]; then ok; else
+    bad "$label"; printf '      want exactly: [%s]\n      got:          [%s]\n' "$want" "$got"
+  fi
+}
+
+command -v ansible-galaxy >/dev/null 2>&1 || {
+  printf 'FAIL  ansible-galaxy is not installed, so the published artifact cannot be checked\n'
+  printf '\n0 passed, 1 failed\n'
+  exit 1
+}
+
+OUT=$(mktemp -d)
+trap 'rm -rf "$OUT"' EXIT
+
+build=$(cd ansible-hardening && ansible-galaxy collection build --force --output-path "$OUT" 2>&1)
+tarball=$(find "$OUT" -name '*.tar.gz' -print -quit)
+if [[ -z "$tarball" ]]; then
+  bad "the collection did not build"
+  printf '%s\n' "$build"
+  printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+  exit 1
+fi
+ok
+
+entries=$(tar tzf "$tarball")
+# A guard that reads an empty listing would pass every assertion below without
+# looking at anything.
+if [[ $(wc -l <<<"$entries") -lt 100 ]]; then
+  bad "the tarball listing came back with $(wc -l <<<"$entries") entries, which is too few to be the collection"
+  printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+  exit 1
+fi
+ok
+
+# Everything the collection is allowed to publish, and nothing else.
+ALLOWED="CHANGELOG.md FILES.json MANIFEST.json README.md docs/ inventory/ meta/ playbooks/ requirements.yml roles/"
+top=$(grep -oE '^[^/]+/?' <<<"$entries" | sort -u | tr '\n' ' ')
+check_exact "the tarball's top level is exactly the allowlist" \
+  "$(tr ' ' '\n' <<<"$top" | sed '/^$/d' | sort | tr '\n' ' ')" \
+  "$(tr ' ' '\n' <<<"$ALLOWED" | sed '/^$/d' | sort | tr '\n' ' ')"
+
+# The four that were actually shipping, named individually so a regression
+# report says which one came back rather than just "the allowlist changed".
+for pattern in '^reports/' '^\.ansible/' '^molecule/' '\.tar\.gz$'; do
+  check_exact "nothing matching $pattern is published" "$(grep -cE "$pattern" <<<"$entries")" "0"
+done
+
+# The operator's real inventory names real hosts. hosts.example is the one
+# that is meant to be read by a stranger.
+check_exact "the real inventory is not published" "$(grep -cE '^inventory/hosts$' <<<"$entries")" "0"
+check_exact "the example inventory still is"      "$(grep -cE '^inventory/hosts\.example$' <<<"$entries")" "1"
+
+# And it still contains the thing people install it for.
+roles=$(grep -oE '^roles/[^/]+/' <<<"$entries" | sort -u | wc -l)
+check_exact "every role is published" "$roles" "$(find ansible-hardening/roles -maxdepth 1 -mindepth 1 -type d | wc -l)"
+
+# Every published file must be one that is in version control.
+#
+# This is the invariant the leak actually broke, and it is worth stating that
+# way rather than as a list of the four things that went wrong.
+# ansible-hardening/.gitignore lists `reports/` and `inventory/hosts` exactly
+# because they are local and must not be shared. ansible-galaxy does not read
+# .gitignore at all; it reads build_ignore, which was broken. So the two files
+# the repository explicitly refuses to track are the two the packager
+# published.
+#
+# The leak also did not come from CI. A clean checkout with the old galaxy.yml
+# produced a tarball with neither of them, and the Galaxy artifact for 3.5.3,
+# built by galaxy-publish on a fresh runner, is clean. What carried them was
+# the tarball built BY HAND on a workstation, which is what the release
+# process tells you to attach. This check only bites where the damage was
+# done, which is the right place for it.
+#
+# MANIFEST.json and FILES.json are generated by the build, so they are the
+# only two exempt.
+tracked=$(git ls-files -- ansible-hardening/ | sed 's|^ansible-hardening/||' | sort -u)
+published=$(grep -vE '/$' <<<"$entries" | grep -vE '^(MANIFEST|FILES)\.json$' | sort -u)
+if [[ -z "$tracked" ]]; then
+  bad "git listed no tracked files under ansible-hardening/, so this check could not run"
+else
+  stray=$(comm -23 <(printf '%s\n' "$published") <(printf '%s\n' "$tracked"))
+  if [[ -z "$stray" ]]; then ok; else
+    bad "the tarball publishes files that are not in version control"
+    printf '      v3.5.3 shipped a real inventory and a real host audit this way:\n'
+    printf '      %s\n' $stray | head -20
+  fi
+fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

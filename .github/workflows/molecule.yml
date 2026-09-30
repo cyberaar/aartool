@@ -39,6 +39,12 @@ jobs:
         working-directory: ansible-hardening
         run: ansible-lint roles/ playbooks/
 
+      # What actually ends up in the published tarball. build_ignore had four
+      # entries and none of them worked, so v3.5.3 shipped a real inventory,
+      # a real host's audit report and a vendored copy of itself.
+      - name: The collection tarball contains only what it should
+        run: bash scripts/tests/test_collection_build.sh
+
   molecule:
     name: ${{ matrix.scenario }}
     runs-on: ubuntu-latest
