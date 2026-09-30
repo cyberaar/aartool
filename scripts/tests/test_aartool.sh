@@ -818,6 +818,13 @@ if command -v script >/dev/null 2>&1; then
   _wide=$(script -qc "stty cols 110 rows 40; $AARTOOL paths $_fx" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
   _narrow=$(script -qc "stty cols 60 rows 40; $AARTOOL paths $_fx" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
   check "wide pty: two stages share one line" "$_wide" "Find a kernel doorway "
+  # A GitHub Actions step runs with no TERM, and tput will not start without
+  # one, so the width came back empty and every run in CI rendered at 80 while
+  # every local run was correct. The guard above could only catch that on a
+  # runner; this one catches it on the machine the change is written on.
+  _noterm=$(script -qc "stty cols 110 rows 40; env -u TERM $AARTOOL paths $_fx" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
+  check_exact "the width is found with TERM unset, not defaulted to 80" \
+    "$(grep -c 'Find a kernel doorway .* Nothing contains the exploit' <<<"$_noterm")" "1"
   check "wide pty: the stages are joined by an arrow on that line" \
     "$(grep -c 'Find a kernel doorway .* Nothing contains the exploit' <<<"$_wide")" "1"
   # Only the lines the layout controls. A chain name is data: it is printed

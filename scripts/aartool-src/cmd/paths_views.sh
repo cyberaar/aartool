@@ -219,7 +219,18 @@ _paths_glyphs() {
 _paths_cols() {
   PATHS_COLS="${COLUMNS:-}"
   if [[ ! "$PATHS_COLS" =~ ^[0-9]+$ ]]; then
-    PATHS_COLS=""; [[ -t 1 ]] && PATHS_COLS="$(tput cols 2>/dev/null || true)"
+    PATHS_COLS=""
+    if [[ -t 1 ]]; then
+      PATHS_COLS="$(tput cols 2>/dev/null || true)"
+      # tput refuses to start without a TERM it recognises, and a GitHub
+      # Actions step has none, so a 110 column pty rendered at 80 there while
+      # every local run was correct. stty asks the terminal driver and needs no
+      # terminfo at all. It reads /dev/tty rather than fd 1 because this line
+      # is inside $(...), where fd 1 is the substitution's pipe and not the
+      # terminal that [[ -t 1 ]] just found.
+      [[ "$PATHS_COLS" =~ ^[0-9]+$ ]] \
+        || PATHS_COLS="$(stty size </dev/tty 2>/dev/null | cut -d' ' -f2 || true)"
+    fi
   fi
   [[ "$PATHS_COLS" =~ ^[0-9]+$ && "$PATHS_COLS" -ge 20 ]] || PATHS_COLS=80
 }
