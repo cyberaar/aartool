@@ -123,6 +123,7 @@ Commands:
   paths       How an attacker would chain your findings, and the link to cut.
   badge       An SVG hardening badge for your README, from an audit.
   demo        See the loop on a bundled sample. No root, changes nothing.
+  export      An audit as SARIF (CI security tabs) or Prometheus metrics.
   install     Put aartool on your PATH.
   uninstall   Remove the symlink install created.
 

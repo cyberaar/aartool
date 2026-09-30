@@ -269,6 +269,7 @@ to filter the mail.
 | `paths` | How an attacker would chain your findings into a complete attack, and a link to cut. Exits 1 when a chain is complete, so it gates CI. |
 | `badge` | A self-contained SVG hardening badge for your README, from an audit. |
 | `demo` | The whole loop on a bundled sample audit. No root, no SSH, changes nothing. |
+| `export` | An audit as SARIF for CI security tabs, or Prometheus metrics for node_exporter. |
 | `install` | Put `aartool` on your PATH. |
 | `uninstall` | Remove it again. On a packaged install it points you at `apt remove` instead. |
 

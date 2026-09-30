@@ -503,5 +503,41 @@ done
 rm -rf "$_bdir"
 check "demo runs without root and shows the loop" "$($AARTOOL demo 2>&1)" "Now the real thing"
 
+# ── export ───────────────────────────────────────────────────────────────────
+# Each case builds its own input from the real fixture; none borrows state.
+_edir=$(mktemp -d)
+_sarif=$($AARTOOL export "$_fx" --format sarif 2>&1)
+_nopen=$(python3 -c "import json,sys;print(len(json.loads(sys.stdin.read())['runs'][0]['results']))" <<<"$_sarif" 2>&1)
+# 57 WARN + 11 FAIL in the fixture: exactly the open checks, no PASS leaks in.
+check_exact "sarif has exactly the open checks as results" "$_nopen" "68"
+check "sarif marks a FAIL as error" "$_sarif" '"level": "error"'
+# A hostname is attacker-influenced. Quote, backslash and newline must survive
+# as valid JSON and valid Prometheus label values.
+python3 - "$_fx" "$_edir/evil.json" <<'PY2'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["cyberaar_baseline"]["host"] = 'we"ird\\host\nname'
+json.dump(d, open(sys.argv[2], "w"))
+PY2
+_esarif=$($AARTOOL export "$_edir/evil.json" --format sarif 2>&1)
+check "sarif with a hostile hostname is valid JSON" \
+  "$(python3 -c "import json,sys;json.loads(sys.stdin.read());print('valid')" <<<"$_esarif" 2>&1)" "valid"
+_eprom=$($AARTOOL export "$_edir/evil.json" --format prometheus 2>&1)
+check "prometheus escapes the hostname quote" "$_eprom" 'host="we\"ird'
+check_exact "prometheus keeps every sample on one line" \
+  "$(grep -c '^aartool_score' <<<"$_eprom")" "1"
+# Empty results must be an error, not a clean-looking export.
+python3 - "$_fx" "$_edir/empty.json" <<'PY2'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["cyberaar_baseline"]["results"] = []
+json.dump(d, open(sys.argv[2], "w"))
+PY2
+_empty=$($AARTOOL export "$_edir/empty.json" --format sarif 2>&1); _erc=$?
+check "export refuses an empty report" "$_empty" "Refusing"
+check "export exits non-zero on an empty report" "rc=$_erc" "rc=1"
+check "export needs a format" "$($AARTOOL export "$_fx" 2>&1)" "--format"
+rm -rf "$_edir"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
