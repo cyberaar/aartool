@@ -42,7 +42,7 @@ jobs:
     steps:
       # The payload is staged with `git archive HEAD`, so the build needs real
       # history rather than the default shallow checkout of a merge commit.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -55,7 +55,7 @@ jobs:
       - name: Version guard
         run: bash scripts/tests/test_versions.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aartool-packages
           path: |
@@ -72,7 +72,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: aartool-packages
           path: dist
