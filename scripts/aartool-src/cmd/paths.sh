@@ -53,10 +53,17 @@ aartool paths: how an attacker would actually chain your findings
 
 Usage:
   aartool paths [REPORT.json] [options]
+  aartool paths A.json B.json ...        estate view, one report per host
 
 Options:
-  --all        Also show chains that are broken (some stage fully closed)
-  -h, --help   This help
+  --all             Also show chains that are broken (some stage fully closed)
+  --format mermaid  Print the chains as a Mermaid diagram (one report only).
+                    GitHub, GitLab and most wikis render it in a code fence.
+  -h, --help        This help
+
+With several reports it shows, per chain, which hosts have it complete and the
+smallest set of findings whose closure breaks it on all of them. Two reports for
+the same host are refused: pass the newest per host.
 
 Exit codes:
   0   no complete attack chain
@@ -119,16 +126,27 @@ _paths_render() {
 }
 
 cmd_paths() {
-  local report="" show_all=0
+  local report="" show_all=0 fmt=""
+  local -a extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help) _paths_usage; return 0 ;;
       --all)     show_all=1; shift ;;
+      --format)  fmt="${2:-}"; [[ "$fmt" == "mermaid" ]] || die "--format takes mermaid."; shift 2 ;;
       -*)        die "Unknown option for paths: $1. Try 'aartool paths --help'." ;;
-      *)         report="$1"; shift ;;
+      *)         if [[ -z "$report" ]]; then report="$1"; else extra+=("$1"); fi; shift ;;
     esac
   done
+  if [[ ${#extra[@]} -gt 0 ]]; then
+    [[ -z "$fmt" ]] || die "--format mermaid draws one host. Pass a single report."
+    _paths_estate "$report" "${extra[@]}"
+    return $?
+  fi
   report="$(report_resolve "$report")"
+  if [[ "$fmt" == "mermaid" ]]; then
+    _paths_mermaid "$report"
+    return $?
+  fi
 
   local -A ST=() CK=()
   local id st ck recs

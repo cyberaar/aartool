@@ -702,3 +702,21 @@ score (red under 50, amber to 74, green to 89, bright green from 90) and prints
 the Markdown to embed it. `aartool demo` runs `advise`, `paths` and `explain`
 on a bundled sample audit: no root, no SSH, nothing read from the machine.
 
+### paths across an estate, and as a diagram
+
+```bash
+aartool paths web-01.json web-02.json web-03.json   # one report per host
+aartool paths web-01.json --format mermaid          # a diagram, one host
+```
+
+With several reports, `paths` shows for each chain which hosts have it complete
+and the smallest set of findings whose closure breaks it on all of them. That is
+the change to make in a shared role, not a list of hosts. A fix that needs a
+decision is flagged. Two reports for the same host are refused, because a
+before and after pair would count one machine twice; pass the newest per host.
+
+`--format mermaid` prints a flowchart that GitHub, GitLab and most wikis render
+inside a code fence with the language `mermaid`. It contains only the chain
+definitions and check IDs plus the host name reduced to letters, digits and
+`._-`, so a hostile hostname cannot inject diagram syntax. Exit codes are the
+same as the text view: 1 when any chain is complete.

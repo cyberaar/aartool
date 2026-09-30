@@ -594,5 +594,51 @@ rm -rf "$_jdir"
 
 check "demo runs without root and shows the loop" "$($AARTOOL demo 2>&1)" "Now the real thing"
 
+# ── paths: estate view and mermaid ───────────────────────────────────────────
+# Inputs are built from the real fixture by changing only host and statuses.
+_pdir=$(mktemp -d)
+python3 - "$_fx" "$_pdir" <<'PY2'
+import json, sys
+src = json.load(open(sys.argv[1]))
+def mk(name, host, close=()):
+    d = json.loads(json.dumps(src)); b = d["cyberaar_baseline"]; b["host"] = host
+    for r in b["results"]:
+        if r["id"] in close:
+            r["status"] = "PASS"
+    json.dump(d, open(f"{sys.argv[2]}/{name}.json", "w"))
+mk("a", "web-01")
+mk("b", "web-02", close=("SYS-04",))
+mk("c", "web-03", close=("SYS-04", "LOG-01", "LOG-06", "LOG-02"))
+mk("dup", "web-01")
+mk("evil", 'x"]\nend\n%% pwn')
+mk("evil2", 'we b<script>;x[1]')
+e = json.loads(json.dumps(src)); e["cyberaar_baseline"]["results"] = []
+json.dump(e, open(f"{sys.argv[2]}/empty.json", "w"))
+PY2
+_est=$($AARTOOL paths "$_pdir/a.json" "$_pdir/b.json" "$_pdir/c.json" 2>&1); _erc=$?
+check "estate: chain complete on every host"   "$_est" "COMPLETE on 3 of 3  The front door"
+check "estate: climb complete only where MAC is missing" "$_est" "COMPLETE on 1 of 3  The local climb"
+check "estate: silent tenant complete on two"  "$_est" "COMPLETE on 2 of 3  The silent tenant"
+check "estate: smallest change names the MAC finding" "$_est" "close SYS-04"
+check "estate: exits 1 when a chain is complete" "rc=$_erc" "rc=1"
+check "estate: refuses two reports for one host" \
+  "$($AARTOOL paths "$_pdir/a.json" "$_pdir/dup.json" 2>&1)" "same host 'web-01'"
+check "estate: refuses an empty report" \
+  "$($AARTOOL paths "$_pdir/a.json" "$_pdir/empty.json" 2>&1)" "Could not read any results"
+_mm=$($AARTOOL paths "$_pdir/c.json" --format mermaid 2>&1)
+check "mermaid: starts a flowchart" "$_mm" "flowchart LR"
+check "mermaid: a fully closed stage is drawn closed" "$_mm" ']:::closed'
+check "mermaid: an open stage is drawn open" "$_mm" ']:::open'
+check "mermaid: a broken chain is labelled broken" "$_mm" "(broken)"
+_hostile=$($AARTOOL paths "$_pdir/evil.json" --format mermaid 2>&1)
+check_exact "mermaid: a hostile hostname adds no lines" \
+  "$(wc -l <<<"$_hostile")" "$(wc -l <<<"$($AARTOOL paths "$_pdir/a.json" --format mermaid 2>&1)")"
+# The quote case is cut short by the reader; this one reaches the sanitiser.
+check_exact "mermaid: a hostname keeps only safe characters" \
+  "$($AARTOOL paths "$_pdir/evil2.json" --format mermaid 2>&1 | head -1)" "%% aartool paths, host: webscriptx1"
+check "mermaid needs one report" \
+  "$($AARTOOL paths "$_pdir/a.json" "$_pdir/b.json" --format mermaid 2>&1)" "single report"
+rm -rf "$_pdir"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
