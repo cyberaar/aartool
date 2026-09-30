@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0]
+
+### Added
+
+- **`paths`: the findings as attack chains.** A list says what is wrong; an
+  attacker walks a chain: a way in, a way up, a way to stay, a way to not be
+  seen. `paths` reads an audit and shows which chains are complete end to end
+  on that host, and the cheapest safe link to cut in each. Exit 1 when a chain
+  is complete, so it works as a CI gate.
+- **`export --format sarif|prometheus`.** SARIF 2.1.0 for GitHub code scanning
+  and CI security tabs, validated against the OASIS schema; the Prometheus text
+  format for node_exporter's textfile collector, validated with
+  `promtool check metrics`.
+- **`badge`**: a self-contained SVG hardening badge from an audit, with no
+  third-party service involved.
+- **`demo`**: the whole loop on a bundled sample audit. No root, nothing read,
+  nothing changed. For deciding whether to point aartool at a machine.
+- **`action.yml`**, a composite GitHub Action that audits the runner, uploads
+  SARIF and can fail the job on a complete attack chain, plus a
+  `workflow_dispatch` self-audit workflow that exercises it end to end.
+
+### Fixed
+
+- **`paths` exit 1 meant both "a chain is complete" and "I could not read the
+  report".** A gate with `fail-on-chain: false` therefore passed a report the
+  tool had failed to parse. Unreadable and missing reports now exit 2, the
+  convention `diff` already uses, and the action fails the job on a 2 whatever
+  `fail-on-chain` says.
+- **The report parser broke on any report that had been through `jq`.** The
+  record split was a literal `},{` and the field greps required no space after
+  the colon, so a pretty-printed report came back as one record: `paths`
+  printed nothing and exited 0, and `advise` reported "Every check passed" for
+  a host with 11 failures. Both tolerate JSON whitespace now, and refuse a
+  parse that yields nothing rather than reporting on it.
+- **Attack-chain membership overclaimed.** "Turn the account into root" held
+  two password-guessing findings that cannot escalate anything, so a host with
+  no passwordless sudo was still reported as internet-to-root. Membership is
+  now a claim about cause: that stage holds only findings that make it true.
+- **`badge` did not escape the label for XML.** Quotes were not escaped at all,
+  so a crafted label produced a valid SVG carrying an `onload` handler, and the
+  angle-bracket escaping was broken on bash 5.2 and later, where an unescaped
+  `&` in a replacement expands to the matched text.
+- **The bundled demo sample was a copy of the test fixture**, carrying French
+  remediation text and em dashes into the file the README points at. It is now
+  a real audit of a partially hardened host, with only the hostname changed.
+
+### Changed
+
+- The baseline script's remediation strings are English throughout
+  (`SCRIPT_VERSION` 4.8.4). Scores are unaffected.
+
 ## [Unreleased]
 
 ### Fixed
