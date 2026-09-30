@@ -120,6 +120,9 @@ Commands:
   doctor      Check everything plan and apply depend on.
   report      Visualise audit reports, or bake them into one shareable file.
   diff        What changed between two audits. Exits non-zero on a regression.
+  paths       How an attacker would chain your findings, and the link to cut.
+  badge       An SVG hardening badge for your README, from an audit.
+  demo        See the loop on a bundled sample. No root, changes nothing.
   install     Put aartool on your PATH.
   uninstall   Remove the symlink install created.
 

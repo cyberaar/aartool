@@ -26,6 +26,9 @@ main() {
     doctor)         shift; cmd_doctor "$@" ;;
     report)         shift; cmd_report "$@" ;;
     diff)           shift; cmd_diff "$@" ;;
+    paths)          shift; cmd_paths "$@" ;;
+    badge)          shift; cmd_badge "$@" ;;
+    demo)           shift; cmd_demo "$@" ;;
     install)        shift; cmd_install "$@" ;;
     # `aartool uninstall` is what people type. It used to be an unknown command,
     # which is a poor answer when the thing they want exists behind a flag.

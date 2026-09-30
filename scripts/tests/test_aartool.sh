@@ -482,5 +482,117 @@ else
 fi
 check "summary points at advise"   "$(cat $_term)"  'aartool advise'
 
+# ── paths, badge, demo ───────────────────────────────────────────────────────
+_fx="../dashboard/demo-audit.json"
+_pout=$($AARTOOL paths "$_fx" 2>&1); _prc=$?
+check "paths finds a complete chain in the sample" "$_pout" "COMPLETE"
+check "paths exits 1 when a chain is complete"     "rc=$_prc" "rc=1"
+check "paths names a link to cut"                  "$_pout" "link to cut"
+check "paths help"  "$($AARTOOL paths --help 2>&1)" "attack"
+
+# Every check ID named in a chain must be a check the baseline actually emits.
+# A typo does not error: the stage simply never opens, the chain can never be
+# COMPLETE, and `paths` reports less exposure than the host has. The failure
+# produces the REASSURING answer, which is the one nobody goes looking for.
+# Proven on this suite: renaming SYS-04 to SYS-44 in the single-ID stage of
+# "the local climb" dropped it from the COMPLETE list, 4 chains to 3, while
+# every assertion here stayed green.
+#
+# check_exact, not check: "none" is a substring of any list of unknown IDs.
+_chain_ids=$(sed -n '/_paths_chains()/,/^}/p' aartool-src/cmd/paths.sh \
+             | grep '^STAGE|' | cut -d'|' -f4 | tr ',' '\n' | sed '/^$/d' | sort -u)
+_known_ids=$($AARTOOL explain --list 2>/dev/null | awk '{print $1}' | sort -u)
+_unknown=$(comm -23 <(printf '%s\n' "$_chain_ids") <(printf '%s\n' "$_known_ids") | tr '\n' ' ')
+check_exact "every attack-chain ID is a real check" "${_unknown:-none}" "none"
+
+# And the extraction itself has to be finding something. If the sed stops
+# matching after a refactor, the comparison above is empty against empty and
+# passes while checking nothing.
+check_exact "the chain-ID extraction is not silently empty" \
+  "$([[ $(printf '%s\n' "$_chain_ids" | grep -c .) -ge 20 ]] && echo ok || echo "only $(printf '%s\n' "$_chain_ids" | grep -c .) IDs found")" "ok"
+
+# The badge label is user text landing in XML, in element content AND inside a
+# double-quoted attribute. Two separate bugs lived here:
+#
+#  - `${label//</&lt;}` yields "<lt;" on bash 5.2 and later, where an unescaped
+#    & in the replacement expands to the matched text. src/lib/core.sh has the
+#    right form with a comment saying so, but it is not bundled into aartool,
+#    which is how the bug came back in new code.
+#  - quotes were not escaped at all, so a label of  x" onload="alert(1)
+#    produced a VALID svg carrying an onload handler. Valid is the dangerous
+#    part: nothing downstream complains about it.
+_bdir=$(mktemp -d)
+$AARTOOL badge "$_fx" --label '<b>&"x' --out "$_bdir/t.svg" >/dev/null 2>&1
+_blab=$(grep -o 'aria-label="[^"]*"' "$_bdir/t.svg" | head -1)
+check "badge escapes angle brackets as entities, not as <lt;" "$_blab" "&lt;b&gt;"
+check "badge escapes the ampersand"                           "$_blab" "&amp;"
+check "badge escapes the quote that would close the attribute" "$_blab" "&quot;"
+check_exact "badge emits no <lt; from the bash 5.2 patsub trap" \
+  "$(grep -c '<lt;\|>gt;' "$_bdir/t.svg")" "0"
+
+# Parse it and ask the DOM, rather than grepping: the injected handler appears
+# in the file either way, and only a parser can say whether it is an attribute
+# or escaped text.
+$AARTOOL badge "$_fx" --label 'x" onload="alert(1)' --out "$_bdir/x.svg" >/dev/null 2>&1
+check_exact "badge label cannot inject an event handler" \
+  "$(python3 - "$_bdir/x.svg" <<'PYEOF'
+import sys, xml.dom.minidom as m
+d = m.parse(sys.argv[1])
+print(' '.join(n for el in d.getElementsByTagName('*')
+                 for n in el.attributes.keys() if n.lower().startswith('on')) or 'none')
+PYEOF
+)" "none"
+rm -rf "$_bdir"
+_bdir=$(mktemp -d)
+$AARTOOL badge "$_fx" --out "$_bdir/b.svg" >/dev/null 2>&1
+check "badge writes an svg with the score" "$(cat "$_bdir/b.svg" 2>/dev/null)" "38/100"
+# The colour bands: derive each report from the real fixture by changing only
+# the score, so the badge's parse is exercised on the producer's shape.
+for _band in "95 #4c1" "80 #97ca00" "55 #dfb317" "10 #e05d44"; do
+  set -- $_band
+  sed "s/\"score\": 38/\"score\": $1/" "$_fx" > "$_bdir/s.json"
+  $AARTOOL badge "$_bdir/s.json" --out "$_bdir/s.svg" >/dev/null 2>&1
+  check "badge colour for score $1" "$(cat "$_bdir/s.svg" 2>/dev/null)" "$2"
+done
+rm -rf "$_bdir"
+
+# A report that has been through jq, or any other JSON tool, is still a valid
+# report. The record split was a literal '},{' and the field greps required no
+# space after the colon, so a pretty-printed report came back as ONE record
+# whose "id" grep returned every id at once:
+#
+#   paths   -> ST["<many lines>"]: bad array subscript, no output, EXIT 0
+#   advise  -> "Nothing open in this report. Every check passed." on a 62%
+#              report carrying 11 failures
+#
+# Exit 0 is documented as "no complete attack chain", so a CI gate went green
+# on a report the tool had failed to read, and advise gave the reassuring
+# answer to a question it could not answer. Both are CLAUDE.md 4.6: "could not
+# read it" must never share a code path with "the answer is no".
+_jdir=$(mktemp -d)
+if command -v jq >/dev/null 2>&1; then
+  jq . "$_fx" > "$_jdir/pretty.json" 2>/dev/null
+  _p_flat=$($AARTOOL paths "$_fx" 2>/dev/null | grep -c COMPLETE || true)
+  _p_pretty=$($AARTOOL paths "$_jdir/pretty.json" 2>/dev/null | grep -c COMPLETE || true)
+  check_exact "paths reads a pretty-printed report the same as a flat one" \
+    "$_p_pretty" "$_p_flat"
+  _a_pretty=$($AARTOOL advise "$_jdir/pretty.json" 2>&1)
+  check_exact "advise does not call a pretty-printed report all green" \
+    "$(grep -c 'Every check passed' <<<"$_a_pretty")" "0"
+  check "advise still finds the findings in a pretty-printed report" "$_a_pretty" "Wave 1"
+else
+  check_exact "jq is needed to prove the pretty-report parse" "jq missing" "jq present"
+fi
+
+# And when a report genuinely cannot be parsed, the exit code must not say
+# "clean". Renaming the key the results array is anchored on is the honest
+# unreadable case.
+sed 's/"ansible_remediation"/"XX_no_such_key"/' "$_fx" > "$_jdir/broken.json"
+$AARTOOL paths "$_jdir/broken.json" >/dev/null 2>&1
+check_exact "paths on an unreadable report does not exit 0" "$?" "1"
+rm -rf "$_jdir"
+
+check "demo runs without root and shows the loop" "$($AARTOOL demo 2>&1)" "Now the real thing"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
