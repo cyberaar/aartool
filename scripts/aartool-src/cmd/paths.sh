@@ -175,7 +175,7 @@ cmd_paths() {
 
   local host; host=$(grep -oP '"host":\s*"\K[^"]*' "$report" | head -1 || true)
   if [[ $detail -eq 0 ]]; then
-    _paths_compact "${host:-this host}"
+    _paths_compact "${host:-this host}" "$report"
     return $?
   fi
   printf '\n%sAttack paths on %s%s\n' "$BOLD" "${host:-this host}" "$RESET"

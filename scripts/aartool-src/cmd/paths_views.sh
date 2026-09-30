@@ -238,9 +238,22 @@ _paths_rows() {
   done
 }
 
-# Uses ST and CK from cmd_paths (dynamic scope). $1 is the host name.
+# Trim the report path to $2 columns, keeping the tail and marking the cut with
+# a leading ellipsis: the file name is the identifying part. Only the strings
+# that come from outside are trimmed. The fixed text of the view is bounded and
+# soft-wraps at most once on a very narrow terminal, which is not worth four
+# more branches; a path or a check name has no bound at all.
+_paths_tail() {
+  local s="$1" w="$2"
+  if (( ${#s} <= w )); then printf '%s' "$s"
+  elif (( w > 3 )); then printf '...%s' "${s: -$((w-3))}"
+  else printf '%s' "$(basename -- "$s")"; fi
+}
+
+# Uses ST and CK from cmd_paths (dynamic scope). $1 is the host name, $2 the
+# report it was read from.
 _paths_compact() {
-  local host="$1"
+  local host="$1" report="$2"
   _paths_load_chains
   _paths_glyphs
   _paths_cols; local cols="$PATHS_COLS"
@@ -252,6 +265,14 @@ _paths_compact() {
   done
 
   printf '\n  %sAttack paths%s  %s\n' "$BOLD" "$RESET" "$host"
+  # Where the answer came from, and the read-only claim. The detail view has
+  # carried this line since the command existed, and the default view is the
+  # one most people now see, so it carries it too. report_resolve picks a
+  # report when none is named, so this is also the only place that choice is
+  # visible.
+  local claim="Nothing was scanned or changed."
+  printf '  %sDerived from %s. %s%s\n' "$CYAN" \
+    "$(_paths_tail "$report" $(( cols - 2 - 13 - 2 - ${#claim} )))" "$claim" "$RESET"
   if [[ $n_complete -eq 0 ]]; then
     printf '  %sNo attack chain is complete on this host.%s\n  Closing any one link keeps it that way.\n' "$GREEN" "$RESET"
   else
@@ -259,19 +280,27 @@ _paths_compact() {
       "$BOLD" "$n_complete" "${#CH_NAME[@]}" "$RESET"
   fi
 
-  # One layout for the whole screen: if any complete chain does not fit as a
-  # pipeline at this width, all of them are stacked, so the output is never a
-  # mix of two shapes.
-  local sep=" ${G_ARROW} " pipeline=1 i
+  # One layout for the whole screen, decided before anything is printed. If any
+  # complete chain does not fit as a pipeline at this width, all of them are
+  # stacked; if any broken chain's note does not fit beside its name, all of
+  # them are wrapped. Both decisions are global for the same reason: a screen
+  # that mixes two shapes reads as a rendering accident, and the broken chains
+  # are where that showed, because a fully hardened host is nothing but broken
+  # chains and their names differ by ten characters.
+  local sep=" ${G_ARROW} " pipeline=1 note_inline=1 i
   for ((c=0; c<${#CH_NAME[@]}; c++)); do
-    [[ "${is_whole[$c]}" -eq 1 ]] || continue
     _paths_rows "$c"
-    local t=4 a b
-    for ((i=0; i<${#R_LBL[@]}; i++)); do
-      a=${#R_LBL[i]}; b=${#R_CNT[i]}; t=$(( t + (a > b ? a : b) ))
-    done
-    t=$(( t + (${#R_LBL[@]} - 1) * 3 ))
-    [[ $t -le $cols ]] || pipeline=0
+    if [[ "${is_whole[$c]}" -eq 1 ]]; then
+      local t=4 a b
+      for ((i=0; i<${#R_LBL[@]}; i++)); do
+        a=${#R_LBL[i]}; b=${#R_CNT[i]}; t=$(( t + (a > b ? a : b) ))
+      done
+      t=$(( t + (${#R_LBL[@]} - 1) * 3 ))
+      [[ $t -le $cols ]] || pipeline=0
+    else
+      local note="broken: \"$R_FIRST_CLOSED\" is closed"
+      (( 5 + ${#CH_NAME[$c]} + 3 + ${#note} <= cols )) || note_inline=0
+    fi
   done
 
   # Complete chains first, broken ones after: the order is the answer.
@@ -285,7 +314,7 @@ _paths_compact() {
 
     if [[ "${is_whole[$c]}" -eq 0 ]]; then
       local note="broken: \"$first_closed\" is closed"
-      if (( 5 + ${#CH_NAME[$c]} + 3 + ${#note} <= cols )); then
+      if [[ $note_inline -eq 1 ]]; then
         printf '\n  %s%s%s  %s%s%s   %s%s%s\n' "$GREEN" "$G_OFF" "$RESET" "$BOLD" "${CH_NAME[$c]}" "$RESET" "$GREEN" "$note" "$RESET"
       else
         printf '\n  %s%s%s  %s%s%s\n     %s%s%s\n' "$GREEN" "$G_OFF" "$RESET" "$BOLD" "${CH_NAME[$c]}" "$RESET" "$GREEN" "$note" "$RESET"
@@ -332,10 +361,18 @@ _paths_compact() {
     done
     if [[ -n "$cut" ]]; then
       # Trim the check's name to the line: it comes from the report and can be
-      # any length.
+      # any length. Below the width where even an ellipsis does not pay for
+      # itself the name is dropped rather than printed as three dots, because
+      # the id beside it is the part you act on.
       local room=$(( cols - 4 - 3 - 2 - ${#cut} - 2 )) what="${CK[$cut]:-}"
-      if (( room > 3 && ${#what} > room )); then what="${what:0:room-3}..."; fi
-      printf '    %scut%s  %s%s%s  %s\n' "$BOLD" "$RESET" "$YELLOW" "$cut" "$RESET" "$what"
+      if (( ${#what} > room )); then
+        if (( room > 6 )); then what="${what:0:room-3}..."; else what=""; fi
+      fi
+      if [[ -n "$what" ]]; then
+        printf '    %scut%s  %s%s%s  %s\n' "$BOLD" "$RESET" "$YELLOW" "$cut" "$RESET" "$what"
+      else
+        printf '    %scut%s  %s%s%s\n' "$BOLD" "$RESET" "$YELLOW" "$cut" "$RESET"
+      fi
     else
       printf '    %severy open link here needs a decision first%s  (aartool advise)\n' "$BOLD" "$RESET"
     fi

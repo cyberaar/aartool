@@ -53,6 +53,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`paths` opens on one screen, and the stage-by-stage list moved behind
+  `--detail`.** The full view is sixty lines for three chains: the right depth
+  for someone already working a chain, and the wrong first thing to meet,
+  because it buries the answer to "am I exposed, and what do I do about it".
+  The default now prints the verdict, one pipeline per complete chain with the
+  count of open findings at each stage, and the link to cut; broken chains
+  follow as one line naming the stage that is closed. It sizes itself to the
+  terminal, commits to one layout for the whole screen rather than mixing two,
+  and falls back to ASCII glyphs outside a UTF-8 locale. Both views read the
+  same chain definitions and the same statuses, so they cannot disagree about
+  which chains are complete. `aartool demo` shows the new view, since it calls
+  `paths`. `--all` now only affects `--detail`: the default always lists the
+  broken chains.
 - The baseline script's remediation strings are English throughout
   (`SCRIPT_VERSION` 4.8.4). Scores are unaffected.
 
