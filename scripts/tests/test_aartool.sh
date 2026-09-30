@@ -489,6 +489,27 @@ check "paths finds a complete chain in the sample" "$_pout" "COMPLETE"
 check "paths exits 1 when a chain is complete"     "rc=$_prc" "rc=1"
 check "paths names a link to cut"                  "$_pout" "link to cut"
 check "paths help"  "$($AARTOOL paths --help 2>&1)" "attack"
+
+# Every check ID named in a chain must be a check the baseline actually emits.
+# A typo does not error: the stage simply never opens, the chain can never be
+# COMPLETE, and `paths` reports less exposure than the host has. The failure
+# produces the REASSURING answer, which is the one nobody goes looking for.
+# Proven on this suite: renaming SYS-04 to SYS-44 in the single-ID stage of
+# "the local climb" dropped it from the COMPLETE list, 4 chains to 3, while
+# every assertion here stayed green.
+#
+# check_exact, not check: "none" is a substring of any list of unknown IDs.
+_chain_ids=$(sed -n '/_paths_chains()/,/^}/p' aartool-src/cmd/paths.sh \
+             | grep '^STAGE|' | cut -d'|' -f4 | tr ',' '\n' | sed '/^$/d' | sort -u)
+_known_ids=$($AARTOOL explain --list 2>/dev/null | awk '{print $1}' | sort -u)
+_unknown=$(comm -23 <(printf '%s\n' "$_chain_ids") <(printf '%s\n' "$_known_ids") | tr '\n' ' ')
+check_exact "every attack-chain ID is a real check" "${_unknown:-none}" "none"
+
+# And the extraction itself has to be finding something. If the sed stops
+# matching after a refactor, the comparison above is empty against empty and
+# passes while checking nothing.
+check_exact "the chain-ID extraction is not silently empty" \
+  "$([[ $(printf '%s\n' "$_chain_ids" | grep -c .) -ge 20 ]] && echo ok || echo "only $(printf '%s\n' "$_chain_ids" | grep -c .) IDs found")" "ok"
 _bdir=$(mktemp -d)
 $AARTOOL badge "$_fx" --out "$_bdir/b.svg" >/dev/null 2>&1
 check "badge writes an svg with the score" "$(cat "$_bdir/b.svg" 2>/dev/null)" "38/100"
