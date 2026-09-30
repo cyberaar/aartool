@@ -122,7 +122,7 @@ if command -v node >/dev/null 2>&1; then
       DB[r.host]=[r]; renderAll();
       for (const h of Object.keys(DB)) openDrawer(h);
       const all=Object.values(__s).map(e=>e._html||"").join("");
-      console.log(["statRow","hostBars","waveDist","catBars","heatmap","commonTbl","drawerB"]
+      console.log(["statRow","chains","hostBars","waveDist","catBars","heatmap","commonTbl","drawerB"]
         .map(id=>id+":"+((__s[id]&&__s[id]._html)||"").length).join(" "));
       if (!all.includes("aartool plan")) { console.log("NOCMD"); }
     })();`;
@@ -264,6 +264,80 @@ if command -v node >/dev/null 2>&1; then
   fi
 else
   printf 'SKIP  node not available, render test not run\n'
+fi
+
+# ── The attack chains must match `aartool paths`, stage by stage ─────────────
+# The dashboard mirrors _paths_chains because it has no shell to call. A chain
+# that says one thing on the terminal and another in the panel is the same bug
+# as a wave table that drifted, and this repository has been bitten by that
+# before. Compare names, intros, labels, reasons and ids.
+PATHS=aartool-src/cmd/paths.sh
+if command -v node >/dev/null 2>&1; then
+  sh_chains=$(sed -n "/cat <<'CHAINS'/,/^CHAINS/p" "$PATHS" | sed '1d;$d')
+  js_chains=$(node -e '
+    const fs=require("fs");
+    const src=fs.readFileSync(process.argv[1],"utf8");
+    const m=src.match(/const CHAINS = (\[[\s\S]*?\n\]);/);
+    if(!m){console.log("NO-CHAINS");process.exit(0);}
+    const C=eval(m[1]);
+    for(const c of C){
+      console.log(["CHAIN",c.name,c.intro].join("|"));
+      for(const s of c.stages) console.log(["STAGE",s.label,s.why,s.ids.join(",")].join("|"));
+    }
+  ' "$DASH" 2>&1)
+  # A guard comparing two empty strings passes forever.
+  if (( ${#sh_chains} > 500 )); then ok; else
+    bad "extracted only ${#sh_chains} characters of chain definitions from $PATHS; the extraction is broken"
+  fi
+  if [[ "$sh_chains" == "$js_chains" ]]; then
+    ok; printf '  attack chains match paths: %d stages\n' "$(grep -c '^STAGE' <<<"$sh_chains")"
+  else
+    bad "the dashboard's CHAINS drifted from _paths_chains in $PATHS:"
+    diff <(printf '%s\n' "$sh_chains") <(printf '%s\n' "$js_chains") | head -8 | sed 's/^/        /'
+  fi
+
+  # ── The panel says the right thing about a small estate ───────────────────
+  # Two hosts built from the real fixture: the second has the MAC stage closed,
+  # so "the local climb" must be complete on exactly one of the two.
+  _paths_js=$(mktemp --suffix=.js)
+  cat > "$_paths_js" <<'NODE'
+const store={};
+const mk=id=>({id,_html:"",_text:"",style:{},classList:{add(){},remove(){},contains:()=>false},
+  set innerHTML(v){this._html=v},get innerHTML(){return this._html},
+  set textContent(v){this._text=v},get textContent(){return this._text},
+  value:id==="sortSel"?"score":id==="scopeSel"?"all":"",
+  addEventListener(){},focus(){},cloneNode(){return this},querySelectorAll:()=>[],
+  appendChild(){},removeChild(){},setAttribute(){},select(){},remove(){}});
+global.document={getElementById:id=>(store[id]||=mk(id)),querySelectorAll:()=>[],
+  querySelector:()=>mk("q"),addEventListener(){},createElement:()=>mk("t"),
+  body:{style:{},appendChild(){},removeChild(){}},execCommand:()=>true};
+global.window={isSecureContext:false,print(){}}; global.navigator={};
+global.FileReader=class{}; global.alert=m=>{throw new Error("alert: "+m)};
+const fs=require("fs");
+const js=fs.readFileSync(process.argv[2],"utf8").match(/<script>([\s\S]*)<\/script>/)[1];
+const base=JSON.parse(fs.readFileSync(process.argv[3],"utf8")).cyberaar_baseline;
+const probe=`;(function(){
+  const a=JSON.parse(JSON.stringify(base)); a.host="web-01";
+  const b=JSON.parse(JSON.stringify(base)); b.host="web-02";
+  b.results.forEach(r=>{ if(r.id==="SYS-04") r.status="PASS"; });
+  DB["web-01"]=[a]; DB["web-02"]=[b]; renderAll();
+  console.log(store.chains._html);
+})();`;
+eval(js+probe);
+NODE
+  panel=$(node "$_paths_js" "$DASH" tests/fixtures/audit-fixture.json 2>&1) || panel="ERROR: $panel"
+  rm -f "$_paths_js"
+  if (( ${#panel} > 500 )); then ok; else bad "the attack paths panel rendered only ${#panel} characters: ${panel:0:200}"; fi
+  grep -q 'Complete on 1 of 2' <<<"$panel" && ok \
+    || bad "with the MAC stage closed on one of two hosts, the local climb should read 'Complete on 1 of 2'"
+  grep -q 'Complete on 2 of 2' <<<"$panel" && ok \
+    || bad "a chain open on both hosts should read 'Complete on 2 of 2'"
+  grep -q 'open on 1 of 2' <<<"$panel" && ok \
+    || bad "the partly open stage should read 'open on 1 of 2'"
+  grep -q 'needs a decision' <<<"$panel" && ok \
+    || bad "the smallest-change line lost its 'needs a decision' flag"
+else
+  printf 'SKIP  node not available, chain tests not run\n'
 fi
 
 # ── Anonymising must not break the document it anonymises ────────────────────
