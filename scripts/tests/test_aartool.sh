@@ -510,6 +510,39 @@ check_exact "every attack-chain ID is a real check" "${_unknown:-none}" "none"
 # passes while checking nothing.
 check_exact "the chain-ID extraction is not silently empty" \
   "$([[ $(printf '%s\n' "$_chain_ids" | grep -c .) -ge 20 ]] && echo ok || echo "only $(printf '%s\n' "$_chain_ids" | grep -c .) IDs found")" "ok"
+
+# The badge label is user text landing in XML, in element content AND inside a
+# double-quoted attribute. Two separate bugs lived here:
+#
+#  - `${label//</&lt;}` yields "<lt;" on bash 5.2 and later, where an unescaped
+#    & in the replacement expands to the matched text. src/lib/core.sh has the
+#    right form with a comment saying so, but it is not bundled into aartool,
+#    which is how the bug came back in new code.
+#  - quotes were not escaped at all, so a label of  x" onload="alert(1)
+#    produced a VALID svg carrying an onload handler. Valid is the dangerous
+#    part: nothing downstream complains about it.
+_bdir=$(mktemp -d)
+$AARTOOL badge "$_fx" --label '<b>&"x' --out "$_bdir/t.svg" >/dev/null 2>&1
+_blab=$(grep -o 'aria-label="[^"]*"' "$_bdir/t.svg" | head -1)
+check "badge escapes angle brackets as entities, not as <lt;" "$_blab" "&lt;b&gt;"
+check "badge escapes the ampersand"                           "$_blab" "&amp;"
+check "badge escapes the quote that would close the attribute" "$_blab" "&quot;"
+check_exact "badge emits no <lt; from the bash 5.2 patsub trap" \
+  "$(grep -c '<lt;\|>gt;' "$_bdir/t.svg")" "0"
+
+# Parse it and ask the DOM, rather than grepping: the injected handler appears
+# in the file either way, and only a parser can say whether it is an attribute
+# or escaped text.
+$AARTOOL badge "$_fx" --label 'x" onload="alert(1)' --out "$_bdir/x.svg" >/dev/null 2>&1
+check_exact "badge label cannot inject an event handler" \
+  "$(python3 - "$_bdir/x.svg" <<'PYEOF'
+import sys, xml.dom.minidom as m
+d = m.parse(sys.argv[1])
+print(' '.join(n for el in d.getElementsByTagName('*')
+                 for n in el.attributes.keys() if n.lower().startswith('on')) or 'none')
+PYEOF
+)" "none"
+rm -rf "$_bdir"
 _bdir=$(mktemp -d)
 $AARTOOL badge "$_fx" --out "$_bdir/b.svg" >/dev/null 2>&1
 check "badge writes an svg with the score" "$(cat "$_bdir/b.svg" 2>/dev/null)" "38/100"
