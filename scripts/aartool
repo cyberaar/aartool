@@ -3383,7 +3383,10 @@ Usage:
   aartool paths A.json B.json ...        estate view, one report per host
 
 Options:
-  --all             Also show chains that are broken (some stage fully closed)
+  --detail          Every finding under every stage, instead of the one-screen
+                    summary. Use it when you are working a chain.
+  --all             With --detail, also show chains that are broken (some
+                    stage fully closed). The summary always lists them.
   --format mermaid  Print the chains as a Mermaid diagram (one report only).
                     GitHub, GitLab and most wikis render it in a code fence.
   -h, --help        This help
@@ -3458,12 +3461,13 @@ _paths_render() {
 }
 
 cmd_paths() {
-  local report="" show_all=0 fmt=""
+  local report="" show_all=0 fmt="" detail=0
   local -a extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help) _paths_usage; return 0 ;;
       --all)     show_all=1; shift ;;
+      --detail)  detail=1; shift ;;
       --format)  fmt="${2:-}"; [[ "$fmt" == "mermaid" ]] || die "--format takes mermaid."; shift 2 ;;
       -*)        die "Unknown option for paths: $1. Try 'aartool paths --help'." ;;
       *)         if [[ -z "$report" ]]; then report="$1"; else extra+=("$1"); fi; shift ;;
@@ -3498,6 +3502,10 @@ cmd_paths() {
   done <<<"$recs"
 
   local host; host=$(grep -oP '"host":\s*"\K[^"]*' "$report" | head -1 || true)
+  if [[ $detail -eq 0 ]]; then
+    _paths_compact "${host:-this host}"
+    return $?
+  fi
   printf '\n%sAttack paths on %s%s\n' "$BOLD" "${host:-this host}" "$RESET"
   printf '  Derived from %s. Nothing was scanned or changed.\n' "$report"
 
@@ -3717,6 +3725,159 @@ _paths_mermaid() {
   printf '  classDef open stroke:red,stroke-width:2px\n'
   printf '  classDef closed stroke:green,stroke-dasharray:4 3\n'
   [[ $complete -eq 0 ]] && return 0
+  return 1
+}
+
+# ── the one-screen view ──────────────────────────────────────────────────────
+# The default for one host. The detail view is 60 lines for three chains, which
+# is the right depth for someone fixing a chain and the wrong first thing to
+# meet: it buries the answer to "am I exposed, and what do I do about it". This
+# prints the verdict, one pipeline per chain, and the link to cut. `--detail`
+# gives the full stage-by-stage list. Both read the same definitions and the
+# same statuses, so they cannot disagree about which chains are complete.
+
+# Glyphs follow the locale, chosen up front like the banner: there is no way to
+# un-print a line of boxes on a serial console or a rescue shell.
+_paths_glyphs() {
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *UTF-8*|*utf8*|*UTF8*) G_ON='●'; G_OFF='○'; G_ARROW='▸' ;;
+    *)                     G_ON='*';  G_OFF='o'; G_ARROW='>' ;;
+  esac
+}
+
+# Terminal width into PATHS_COLS: COLUMNS if set, else what the terminal
+# reports, else 80. A pipe has no width, so it gets the conventional one. Sets a
+# global instead of printing, because inside $(...) stdout is never a terminal
+# and the test for one would always say no.
+_paths_cols() {
+  PATHS_COLS="${COLUMNS:-}"
+  if [[ ! "$PATHS_COLS" =~ ^[0-9]+$ ]]; then
+    PATHS_COLS=""; [[ -t 1 ]] && PATHS_COLS="$(tput cols 2>/dev/null || true)"
+  fi
+  [[ "$PATHS_COLS" =~ ^[0-9]+$ && "$PATHS_COLS" -ge 20 ]] || PATHS_COLS=80
+}
+
+# Fill the row arrays for chain $1 from ST: R_LBL, R_CNT, R_OPN (per stage, in
+# order) and R_FIRST_CLOSED. Globals rather than a subshell, so the arrays live.
+_paths_rows() {
+  local c="$1" s o
+  R_LBL=(); R_CNT=(); R_OPN=(); R_FIRST_CLOSED=""
+  for ((s=0; s<${#SG_CHAIN[@]}; s++)); do
+    [[ "${SG_CHAIN[$s]}" == "$c" ]] || continue
+    o="$(_paths_stage_open ST "$s")"
+    R_LBL+=("${SG_LABEL[$s]}"); R_OPN+=("$o")
+    if [[ -n "$o" ]]; then R_CNT+=("$(wc -w <<<"$o" | tr -d ' ') open")
+    else R_CNT+=("closed"); [[ -n "$R_FIRST_CLOSED" ]] || R_FIRST_CLOSED="${SG_LABEL[$s]}"; fi
+  done
+}
+
+# Uses ST and CK from cmd_paths (dynamic scope). $1 is the host name.
+_paths_compact() {
+  local host="$1"
+  _paths_load_chains
+  _paths_glyphs
+  _paths_cols; local cols="$PATHS_COLS"
+
+  local c s n_complete=0
+  local -a is_whole=()
+  for ((c=0; c<${#CH_NAME[@]}; c++)); do
+    if _paths_chain_complete ST "$c"; then is_whole[c]=1; n_complete=$((n_complete+1)); else is_whole[c]=0; fi
+  done
+
+  printf '\n  %sAttack paths%s  %s\n' "$BOLD" "$RESET" "$host"
+  if [[ $n_complete -eq 0 ]]; then
+    printf '  %sNo attack chain is complete on this host.%s\n  Closing any one link keeps it that way.\n' "$GREEN" "$RESET"
+  else
+    printf '  %s%d of %d chains are complete.%s Cut one link in each.\n' \
+      "$BOLD" "$n_complete" "${#CH_NAME[@]}" "$RESET"
+  fi
+
+  # One layout for the whole screen: if any complete chain does not fit as a
+  # pipeline at this width, all of them are stacked, so the output is never a
+  # mix of two shapes.
+  local sep=" ${G_ARROW} " pipeline=1 i
+  for ((c=0; c<${#CH_NAME[@]}; c++)); do
+    [[ "${is_whole[$c]}" -eq 1 ]] || continue
+    _paths_rows "$c"
+    local t=4 a b
+    for ((i=0; i<${#R_LBL[@]}; i++)); do
+      a=${#R_LBL[i]}; b=${#R_CNT[i]}; t=$(( t + (a > b ? a : b) ))
+    done
+    t=$(( t + (${#R_LBL[@]} - 1) * 3 ))
+    [[ $t -le $cols ]] || pipeline=0
+  done
+
+  # Complete chains first, broken ones after: the order is the answer.
+  local pass
+  for pass in 1 0; do
+  for ((c=0; c<${#CH_NAME[@]}; c++)); do
+    [[ "${is_whole[$c]}" -eq "$pass" ]] || continue
+    _paths_rows "$c"
+    local -a lbl=("${R_LBL[@]}") cnt=("${R_CNT[@]}") opn=("${R_OPN[@]}")
+    local first_closed="$R_FIRST_CLOSED"
+
+    if [[ "${is_whole[$c]}" -eq 0 ]]; then
+      local note="broken: \"$first_closed\" is closed"
+      if (( 5 + ${#CH_NAME[$c]} + 3 + ${#note} <= cols )); then
+        printf '\n  %s%s%s  %s%s%s   %s%s%s\n' "$GREEN" "$G_OFF" "$RESET" "$BOLD" "${CH_NAME[$c]}" "$RESET" "$GREEN" "$note" "$RESET"
+      else
+        printf '\n  %s%s%s  %s%s%s\n     %s%s%s\n' "$GREEN" "$G_OFF" "$RESET" "$BOLD" "${CH_NAME[$c]}" "$RESET" "$GREEN" "$note" "$RESET"
+      fi
+      continue
+    fi
+
+    printf '\n  %s%s COMPLETE%s  %s%s%s\n' "$RED" "$G_ON" "$RESET" "$BOLD" "${CH_NAME[$c]}" "$RESET"
+
+    local n=${#lbl[@]}
+    local -a colw=()
+    for ((i=0; i<n; i++)); do
+      local wa=${#lbl[i]} wb=${#cnt[i]}
+      colw[i]=$(( wa > wb ? wa : wb ))
+    done
+
+    if [[ $pipeline -eq 1 ]]; then
+      printf '    '
+      for ((i=0; i<n; i++)); do
+        [[ $i -gt 0 ]] && printf '%s' "$sep"
+        printf '%s%-*s%s' "$RED" "${colw[i]}" "${lbl[i]}" "$RESET"
+      done
+      printf '\n    '
+      for ((i=0; i<n; i++)); do
+        [[ $i -gt 0 ]] && printf '   '
+        # The last column is not padded: trailing spaces are invisible noise in
+        # a copied screenshot and in a diff.
+        if [[ $i -lt $((n-1)) ]]; then printf '%-*s' "${colw[i]}" "${cnt[i]}"; else printf '%s' "${cnt[i]}"; fi
+      done
+      printf '\n'
+    else
+      for ((i=0; i<n; i++)); do
+        printf '    %s%s%s %s%s%s  (%s)\n' "$YELLOW" "$G_ARROW" "$RESET" "$RED" "${lbl[i]}" "$RESET" "${cnt[i]}"
+      done
+    fi
+
+    # The first open finding that is safe to apply blind, in stage order.
+    local cut="" y
+    for ((i=0; i<n; i++)); do
+      [[ -n "$cut" ]] && break
+      for y in ${opn[i]}; do
+        _advise_costly "$y" || { cut="$y"; break; }
+      done
+    done
+    if [[ -n "$cut" ]]; then
+      # Trim the check's name to the line: it comes from the report and can be
+      # any length.
+      local room=$(( cols - 4 - 3 - 2 - ${#cut} - 2 )) what="${CK[$cut]:-}"
+      if (( room > 3 && ${#what} > room )); then what="${what:0:room-3}..."; fi
+      printf '    %scut%s  %s%s%s  %s\n' "$BOLD" "$RESET" "$YELLOW" "$cut" "$RESET" "$what"
+    else
+      printf '    %severy open link here needs a decision first%s  (aartool advise)\n' "$BOLD" "$RESET"
+    fi
+  done
+  done
+
+  printf '\n  %saartool explain <ID>%s  why a link matters\n' "$CYAN" "$RESET"
+  printf '  %s--detail%s  every finding   %s--format mermaid%s  a diagram\n\n' "$CYAN" "$RESET" "$CYAN" "$RESET"
+  [[ $n_complete -eq 0 ]] && return 0
   return 1
 }
 

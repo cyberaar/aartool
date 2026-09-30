@@ -490,7 +490,8 @@ _fx="../dashboard/demo-audit.json"
 _pout=$($AARTOOL paths "$_fx" 2>&1); _prc=$?
 check "paths finds a complete chain in the sample" "$_pout" "COMPLETE"
 check "paths exits 1 when a chain is complete"     "rc=$_prc" "rc=1"
-check "paths names a link to cut"                  "$_pout" "link to cut"
+check "paths names a link to cut"                  "$_pout" "  cut  "
+check "paths --detail names a safe link to cut"    "$($AARTOOL paths "$_fx" --detail 2>&1)" "link to cut"
 check "paths help"  "$($AARTOOL paths --help 2>&1)" "attack"
 
 # Every check ID named in a chain must be a check the baseline actually emits.
@@ -760,6 +761,46 @@ check_exact "mermaid: a hostname keeps only safe characters" \
 check "mermaid needs one report" \
   "$($AARTOOL paths "$_pdir/a.json" "$_pdir/b.json" --format mermaid 2>&1)" "single report"
 rm -rf "$_pdir"
+
+# ── paths: the one-screen view ───────────────────────────────────────────────
+# The point of the default view is that it fits on a screen and reads as one
+# shape. Both are properties of the output, so both are asserted on the output.
+_n_complete=$($AARTOOL paths "$_fx" --detail 2>/dev/null | grep -c '● COMPLETE' || true)
+_one=$($AARTOOL paths "$_fx" 2>&1)
+check "one-screen view is short enough for a screen" \
+  "$([[ $(wc -l <<<"$_one") -le 30 ]] && echo fits || echo "too long: $(wc -l <<<"$_one") lines")" "fits"
+check_exact "one-screen view has one COMPLETE line per complete chain" \
+  "$(grep -c 'COMPLETE' <<<"$_one")" "$_n_complete"
+check "one-screen view says how many chains are complete" "$_one" "of 4 chains are complete"
+_detail_lines=$($AARTOOL paths "$_fx" --detail 2>&1 | wc -l)
+check "the detail view is still the long one" \
+  "$([[ $_detail_lines -gt 40 ]] && echo long || echo "only $_detail_lines lines")" "long"
+
+# Width decides the shape. Narrow terminals are tested on a real pty, not by
+# setting COLUMNS, because that is how the last narrow-terminal bug got through:
+# a check that asks "is stdout a terminal" is false inside $(...), and COLUMNS
+# does not exercise it.
+if command -v script >/dev/null 2>&1; then
+  # ANSI stripped: the pty is a terminal, so colour is on, and the assertions
+  # are about layout.
+  _wide=$(script -qc "stty cols 110 rows 40; $AARTOOL paths $_fx" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
+  _narrow=$(script -qc "stty cols 60 rows 40; $AARTOOL paths $_fx" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
+  check "wide pty: two stages share one line" "$_wide" "Find a kernel doorway "
+  check "wide pty: the stages are joined by an arrow on that line" \
+    "$(grep -c 'Find a kernel doorway .* Nothing contains the exploit' <<<"$_wide")" "1"
+  check_exact "narrow pty: no line is wider than the terminal" \
+    "$(awk '{ if (length($0) > 60) n++ } END { print n+0 }' <<<"$_narrow")" "0"
+  check_exact "narrow pty: stages are stacked, not joined" \
+    "$(grep -c 'Find a kernel doorway .* Nothing contains' <<<"$_narrow")" "0"
+else
+  FAIL=$((FAIL+1)); printf 'FAIL  script(1) is missing, so the narrow-terminal guard cannot run\n'
+fi
+
+# Without UTF-8 the view must not print a byte a serial console cannot draw.
+_ascii=$(LC_ALL=C LANG=C $AARTOOL paths "$_fx" 2>&1)
+check "the C locale still gets the view" "$_ascii" "COMPLETE"
+check_exact "the C locale output is pure ASCII" \
+  "$(printf '%s' "$_ascii" | LC_ALL=C grep -c -P '[^\x00-\x7F]' || true)" "0"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

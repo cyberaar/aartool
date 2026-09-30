@@ -55,7 +55,10 @@ Usage:
   aartool paths A.json B.json ...        estate view, one report per host
 
 Options:
-  --all             Also show chains that are broken (some stage fully closed)
+  --detail          Every finding under every stage, instead of the one-screen
+                    summary. Use it when you are working a chain.
+  --all             With --detail, also show chains that are broken (some
+                    stage fully closed). The summary always lists them.
   --format mermaid  Print the chains as a Mermaid diagram (one report only).
                     GitHub, GitLab and most wikis render it in a code fence.
   -h, --help        This help
@@ -130,12 +133,13 @@ _paths_render() {
 }
 
 cmd_paths() {
-  local report="" show_all=0 fmt=""
+  local report="" show_all=0 fmt="" detail=0
   local -a extra=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help) _paths_usage; return 0 ;;
       --all)     show_all=1; shift ;;
+      --detail)  detail=1; shift ;;
       --format)  fmt="${2:-}"; [[ "$fmt" == "mermaid" ]] || die "--format takes mermaid."; shift 2 ;;
       -*)        die "Unknown option for paths: $1. Try 'aartool paths --help'." ;;
       *)         if [[ -z "$report" ]]; then report="$1"; else extra+=("$1"); fi; shift ;;
@@ -170,6 +174,10 @@ cmd_paths() {
   done <<<"$recs"
 
   local host; host=$(grep -oP '"host":\s*"\K[^"]*' "$report" | head -1 || true)
+  if [[ $detail -eq 0 ]]; then
+    _paths_compact "${host:-this host}"
+    return $?
+  fi
   printf '\n%sAttack paths on %s%s\n' "$BOLD" "${host:-this host}" "$RESET"
   printf '  Derived from %s. Nothing was scanned or changed.\n' "$report"
 

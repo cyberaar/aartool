@@ -684,7 +684,17 @@ alone is a "medium". Together they are the incident.
 ```bash
 aartool paths            # which attack chains are complete on this host?
 aartool paths || exit 1  # fail a CI job while any chain is complete
+aartool paths --detail    # every finding under every stage
 ```
+
+The default is one screen: the verdict, one pipeline per complete chain with how
+many findings are open at each stage, and the link to cut. Broken chains follow
+as a single line naming the stage that is closed. It sizes itself to the
+terminal (stages side by side when they fit, stacked when they do not, one
+layout for the whole screen) and uses plain ASCII glyphs outside a UTF-8 locale.
+`--detail` prints every finding under every stage, which is the depth you want
+while working a chain and the wrong first thing to read.
+
 
 ```
 ● COMPLETE  The silent tenant: root to never found
