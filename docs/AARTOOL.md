@@ -740,6 +740,8 @@ score (red under 50, amber to 74, green to 89, bright green from 90) and prints
 the Markdown to embed it. `aartool demo` runs `advise`, `paths` and `explain`
 on a bundled sample audit: no root, no SSH, nothing read from the machine.
 
+![aartool demo: the whole loop on a bundled sample, from the ordered plan through the attack chains to a single finding explained](media/aartool-demo.gif)
+
 
 ## export, and the GitHub Action
 
