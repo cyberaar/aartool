@@ -32,8 +32,7 @@ CHAIN|The front door: internet to root|An anonymous attacker, a wordlist and pat
 STAGE|Reach a login|The host answers the network and nothing filters who asks|NET-01,INT-04
 STAGE|Guess without being stopped|Passwords are accepted, attempts are unlimited and nothing bans the source|SSH-02,SSH-03,INT-06,AUTH-09,AUTH-04,AUTH-14
 STAGE|Land as root, or become it|The account reached is root, or becomes root without a password|SSH-01,AUTH-05,AUTH-11
-CHAIN|The local climb: any shell to root|A stolen key, a web-app RCE, a compromised CI job. Any foothold.
-STAGE|More ways to get that foothold|Password logins and dormant accounts widen who can land one|SSH-02,AUTH-06
+CHAIN|The local climb: any shell to root|A stolen key, a web-app RCE, a compromised CI job. The foothold is the premise, not a finding.
 STAGE|Find a kernel doorway|One unprivileged-only bug is enough, and these are the doors|KRN-01,KRN-02,KRN-03,KRN-04,KRN-12
 STAGE|Nothing contains the exploit|No MAC policy, so root is root|SYS-04
 CHAIN|The silent tenant: root to never found|What happens after root, and why you would not hear about it.
@@ -68,6 +67,11 @@ the same host are refused: pass the newest per host.
 Exit codes:
   0   no complete attack chain
   1   at least one chain is complete end to end (useful as a CI gate)
+  2   the report could not be read, so neither answer was reached
+
+Two is separate from one on purpose, and `diff` uses the same convention. A
+gate that treats "I could not read it" as "nothing is wrong" is the failure
+this command exists to prevent.
 
 With no argument it uses the newest report `inspect` wrote. Read-only.
 EOF
@@ -142,7 +146,13 @@ cmd_paths() {
     _paths_estate "$report" "${extra[@]}"
     return $?
   fi
-  report="$(report_resolve "$report")"
+  # A command in an `if` condition is exempt from set -e, so the die inside
+  # report_resolve reaches us as a false condition rather than killing the
+  # script with 1. "No such report" is the same class as "cannot parse it":
+  # the question was never answered, so it is 2, not 0 and not 1.
+  if ! report="$(report_resolve "$report")"; then
+    return 2
+  fi
   if [[ "$fmt" == "mermaid" ]]; then
     _paths_mermaid "$report"
     return $?
@@ -150,7 +160,11 @@ cmd_paths() {
 
   local -A ST=() CK=()
   local id st ck recs
-  recs="$(report_records "$report")" || die "Could not read any results out of $report."
+  if ! recs="$(report_records "$report")"; then
+    printf '%s[ERROR]%s %s\n' "$RED" "$RESET" \
+      "Could not read any results out of $report. Exit 2: this is not 'no chain is complete'." >&2
+    return 2
+  fi
   while IFS='|' read -r id st ck; do
     ST["$id"]="$st"; CK["$id"]="$ck"
   done <<<"$recs"

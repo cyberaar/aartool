@@ -1,0 +1,52 @@
+name: aartool audit
+description: Audit the runner with aartool, upload findings as SARIF, and fail when an attack chain is complete.
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  fail-on-chain:
+    description: Fail the job when `aartool paths` reports a complete attack chain.
+    required: false
+    default: "true"
+  sarif-file:
+    description: Where to write the SARIF file.
+    required: false
+    default: aartool.sarif
+
+runs:
+  using: composite
+  steps:
+    - name: Audit
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p aartool-reports
+        sudo bash "${{ github.action_path }}/scripts/aartool" inspect -o aartool-reports
+        report="$(ls -t aartool-reports/aartool-*.json | head -1)"
+        echo "AARTOOL_REPORT=$report" >> "$GITHUB_ENV"
+
+    - name: Export SARIF
+      shell: bash
+      run: |
+        bash "${{ github.action_path }}/scripts/aartool" export "$AARTOOL_REPORT" \
+          --format sarif --out "${{ inputs.sarif-file }}"
+
+    - name: Attack chains
+      shell: bash
+      run: |
+        rc=0
+        bash "${{ github.action_path }}/scripts/aartool" paths "$AARTOOL_REPORT" || rc=$?
+        # 2 means the report could not be read, so neither answer was reached.
+        # That is a broken job whatever fail-on-chain says: treating it as
+        # "no chain is complete" is how a gate goes green on nothing.
+        if [[ "$rc" -eq 2 ]]; then
+          echo "::error::aartool paths could not read $AARTOOL_REPORT"
+          exit 2
+        fi
+        if [[ "$rc" -eq 1 ]]; then
+          echo "::warning::aartool found a complete attack chain"
+          if [[ "${{ inputs.fail-on-chain }}" == "true" ]]; then
+            exit 1
+          fi
+        fi

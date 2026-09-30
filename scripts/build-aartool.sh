@@ -31,6 +31,7 @@ PARTS=(
   aartool-src/cmd/paths_views.sh
   aartool-src/cmd/badge.sh
   aartool-src/cmd/demo.sh
+  aartool-src/cmd/export.sh
   aartool-src/cmd/install.sh
   aartool-src/run.sh
 )

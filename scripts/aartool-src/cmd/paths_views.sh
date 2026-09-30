@@ -154,8 +154,20 @@ _paths_mermaid() {
 
   printf '%%%% aartool paths, host: %s\n' "${host:-unknown}"
   printf 'flowchart LR\n'
+  # Emitted LAST chain first, on purpose. Mermaid lays subgraphs out against
+  # the flow direction, so under `flowchart LR` they stack vertically in
+  # REVERSE declaration order: declared front-door-first, the diagram put the
+  # front door at the bottom and the pivot at the top, which is the opposite of
+  # the reading order the text output uses. Checked by rendering both with
+  # mermaid-cli and comparing the images, not by reading the spec.
+  #
+  # The alternatives were worse. `flowchart TB` puts the chains side by side,
+  # 784x87 for four of them, unreadable. Invisible links (`C0 ~~~ C1`) pin the
+  # order but make mermaid treat the subgraphs as nodes in the LR flow, giving
+  # the same flattened row. The subgraph ids stay tied to the chain index, so
+  # C0 is still the front door whatever order it is printed in.
   local c s complete=0 prev
-  for ((c=0; c<${#CH_NAME[@]}; c++)); do
+  for ((c=${#CH_NAME[@]}-1; c>=0; c--)); do
     local whole=0; _paths_chain_complete st "$c" && whole=1
     [[ $whole -eq 1 ]] && complete=$((complete+1))
     local tag="broken"; [[ $whole -eq 1 ]] && tag="COMPLETE"

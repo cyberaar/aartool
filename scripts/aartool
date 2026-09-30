@@ -30,7 +30,7 @@
 # =============================================================================
 set -euo pipefail
 
-AARTOOL_VERSION="3.5.3"
+AARTOOL_VERSION="3.6.0"
 
 # ── Output ───────────────────────────────────────────────────────────────────
 if [[ -t 1 ]]; then
@@ -123,6 +123,7 @@ Commands:
   paths       How an attacker would chain your findings, and the link to cut.
   badge       An SVG hardening badge for your README, from an audit.
   demo        See the loop on a bundled sample. No root, changes nothing.
+  export      An audit as SARIF (CI security tabs) or Prometheus metrics.
   install     Put aartool on your PATH.
   uninstall   Remove the symlink install created.
 
@@ -3359,8 +3360,7 @@ CHAIN|The front door: internet to root|An anonymous attacker, a wordlist and pat
 STAGE|Reach a login|The host answers the network and nothing filters who asks|NET-01,INT-04
 STAGE|Guess without being stopped|Passwords are accepted, attempts are unlimited and nothing bans the source|SSH-02,SSH-03,INT-06,AUTH-09,AUTH-04,AUTH-14
 STAGE|Land as root, or become it|The account reached is root, or becomes root without a password|SSH-01,AUTH-05,AUTH-11
-CHAIN|The local climb: any shell to root|A stolen key, a web-app RCE, a compromised CI job. Any foothold.
-STAGE|More ways to get that foothold|Password logins and dormant accounts widen who can land one|SSH-02,AUTH-06
+CHAIN|The local climb: any shell to root|A stolen key, a web-app RCE, a compromised CI job. The foothold is the premise, not a finding.
 STAGE|Find a kernel doorway|One unprivileged-only bug is enough, and these are the doors|KRN-01,KRN-02,KRN-03,KRN-04,KRN-12
 STAGE|Nothing contains the exploit|No MAC policy, so root is root|SYS-04
 CHAIN|The silent tenant: root to never found|What happens after root, and why you would not hear about it.
@@ -3395,6 +3395,11 @@ the same host are refused: pass the newest per host.
 Exit codes:
   0   no complete attack chain
   1   at least one chain is complete end to end (useful as a CI gate)
+  2   the report could not be read, so neither answer was reached
+
+Two is separate from one on purpose, and `diff` uses the same convention. A
+gate that treats "I could not read it" as "nothing is wrong" is the failure
+this command exists to prevent.
 
 With no argument it uses the newest report `inspect` wrote. Read-only.
 EOF
@@ -3469,7 +3474,13 @@ cmd_paths() {
     _paths_estate "$report" "${extra[@]}"
     return $?
   fi
-  report="$(report_resolve "$report")"
+  # A command in an `if` condition is exempt from set -e, so the die inside
+  # report_resolve reaches us as a false condition rather than killing the
+  # script with 1. "No such report" is the same class as "cannot parse it":
+  # the question was never answered, so it is 2, not 0 and not 1.
+  if ! report="$(report_resolve "$report")"; then
+    return 2
+  fi
   if [[ "$fmt" == "mermaid" ]]; then
     _paths_mermaid "$report"
     return $?
@@ -3477,7 +3488,11 @@ cmd_paths() {
 
   local -A ST=() CK=()
   local id st ck recs
-  recs="$(report_records "$report")" || die "Could not read any results out of $report."
+  if ! recs="$(report_records "$report")"; then
+    printf '%s[ERROR]%s %s\n' "$RED" "$RESET" \
+      "Could not read any results out of $report. Exit 2: this is not 'no chain is complete'." >&2
+    return 2
+  fi
   while IFS='|' read -r id st ck; do
     ST["$id"]="$st"; CK["$id"]="$ck"
   done <<<"$recs"
@@ -3664,8 +3679,20 @@ _paths_mermaid() {
 
   printf '%%%% aartool paths, host: %s\n' "${host:-unknown}"
   printf 'flowchart LR\n'
+  # Emitted LAST chain first, on purpose. Mermaid lays subgraphs out against
+  # the flow direction, so under `flowchart LR` they stack vertically in
+  # REVERSE declaration order: declared front-door-first, the diagram put the
+  # front door at the bottom and the pivot at the top, which is the opposite of
+  # the reading order the text output uses. Checked by rendering both with
+  # mermaid-cli and comparing the images, not by reading the spec.
+  #
+  # The alternatives were worse. `flowchart TB` puts the chains side by side,
+  # 784x87 for four of them, unreadable. Invisible links (`C0 ~~~ C1`) pin the
+  # order but make mermaid treat the subgraphs as nodes in the LR flow, giving
+  # the same flattened row. The subgraph ids stay tied to the chain index, so
+  # C0 is still the front door whatever order it is printed in.
   local c s complete=0 prev
-  for ((c=0; c<${#CH_NAME[@]}; c++)); do
+  for ((c=${#CH_NAME[@]}-1; c>=0; c--)); do
     local whole=0; _paths_chain_complete st "$c" && whole=1
     [[ $whole -eq 1 ]] && complete=$((complete+1))
     local tag="broken"; [[ $whole -eq 1 ]] && tag="COMPLETE"
@@ -3803,6 +3830,149 @@ cmd_demo() {
   printf '\n%sNow the real thing:%s  sudo aartool inspect   then   aartool advise   and   aartool paths\n\n' "$BOLD" "$RESET"
 }
 
+# ── export ───────────────────────────────────────────────────────────────────
+# The audit in the formats other tools already read: SARIF, which GitHub code
+# scanning and most CI security tabs ingest, and the Prometheus text format,
+# which node_exporter's textfile collector scrapes.
+#
+# Parsed with python3's json module rather than grep. The report is
+# attacker-influenced text (a hostname, a config value in a detail string), and
+# hand-rolled JSON output is how a quote in a hostname becomes a broken upload.
+# An unreadable or empty report is an error, never an empty export: a SARIF file
+# with zero results reads as "clean", which is the comforting answer.
+
+_export_usage() {
+  cat <<'EOF'
+aartool export: an audit in SARIF or Prometheus format. Changes nothing.
+
+Usage:
+  aartool export [REPORT.json] --format sarif|prometheus [--out FILE]
+
+Options:
+  --format FMT   sarif       SARIF 2.1.0, for GitHub code scanning and CI tabs
+                 prometheus  text format, for node_exporter's textfile collector
+  --out FILE     Write here instead of standard output
+  -h, --help     This help
+
+With no REPORT it uses the newest report `inspect` wrote.
+
+Examples:
+  aartool export --format sarif --out aartool.sarif
+  aartool export --format prometheus --out /var/lib/node_exporter/aartool.prom
+EOF
+}
+
+cmd_export() {
+  local report="" fmt="" out=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) _export_usage; return 0 ;;
+      --format)  fmt="${2:-}"; [[ -n "$fmt" ]] || die "--format needs sarif or prometheus."; shift 2 ;;
+      --out)     out="${2:-}"; [[ -n "$out" ]] || die "--out needs a file."; shift 2 ;;
+      -*)        die "Unknown option for export: $1. Try 'aartool export --help'." ;;
+      *)         report="$1"; shift ;;
+    esac
+  done
+  case "$fmt" in
+    sarif|prometheus) ;;
+    "") die "export needs --format sarif or --format prometheus." ;;
+    *)  die "Unknown format: $fmt. Use sarif or prometheus." ;;
+  esac
+  command -v python3 >/dev/null 2>&1 \
+    || die "export needs python3 to parse the report. It is present on any machine that can run Ansible."
+  report="$(report_resolve "$report")"
+
+  local tmp; tmp="$(mktemp)"
+  if ! python3 - "$report" "$fmt" "$AARTOOL_VERSION" >"$tmp" <<'PY'
+import json, sys
+
+path, fmt, tool_version = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path, encoding="utf-8") as fh:
+        doc = json.load(fh)
+except (OSError, json.JSONDecodeError) as e:
+    sys.stderr.write(f"[ERROR] Cannot read {path}: {e}\n"); sys.exit(2)
+
+rep = doc.get("aartool") or doc.get("cyberaar_baseline")
+results = rep.get("results") if isinstance(rep, dict) else None
+if not isinstance(results, list) or not results:
+    sys.stderr.write(f"[ERROR] {path} has no results to export. Refusing to write an export that reads as clean.\n")
+    sys.exit(2)
+for r in results:
+    if not isinstance(r, dict) or r.get("status") not in ("PASS", "WARN", "FAIL") or not r.get("id"):
+        sys.stderr.write(f"[ERROR] {path} has a result with no id or an unknown status: {r!r}\n"); sys.exit(2)
+
+host = str(rep.get("host") or "unknown")
+
+if fmt == "sarif":
+    open_ = [r for r in results if r["status"] in ("WARN", "FAIL")]
+    rules, seen = [], set()
+    for r in results:
+        if r["id"] in seen:
+            continue
+        seen.add(r["id"])
+        rules.append({
+            "id": r["id"],
+            "name": r["id"].replace("-", ""),
+            "shortDescription": {"text": str(r.get("check", r["id"]))},
+            "helpUri": "https://github.com/cyberaar/aartool",
+            "help": {"text": f"Run: aartool explain {r['id']}"},
+        })
+    sarif = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "aartool",
+                "version": tool_version,
+                "informationUri": "https://github.com/cyberaar/aartool",
+                "rules": rules,
+            }},
+            "results": [{
+                "ruleId": r["id"],
+                "level": "error" if r["status"] == "FAIL" else "warning",
+                "message": {"text": f"{r.get('check', r['id'])}: {r.get('detail', '')}".rstrip(": ")},
+                "locations": [{
+                    "physicalLocation": {"artifactLocation": {"uri": path.replace("\\", "/")}},
+                    "logicalLocations": [{"name": host, "kind": "host"}],
+                }],
+            } for r in open_],
+            "properties": {"host": host, "score": rep.get("score"), "checks": len(results)},
+        }],
+    }
+    json.dump(sarif, sys.stdout, indent=2); sys.stdout.write("\n")
+else:
+    def esc(v):
+        return str(v).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+    out = []
+    out.append("# HELP aartool_score Hardening score, 0 to 100.")
+    out.append("# TYPE aartool_score gauge")
+    out.append(f'aartool_score{{host="{esc(host)}"}} {rep.get("score", 0)}')
+    out.append("# HELP aartool_checks Number of checks by status.")
+    out.append("# TYPE aartool_checks gauge")
+    for st in ("PASS", "WARN", "FAIL"):
+        n = sum(1 for r in results if r["status"] == st)
+        out.append(f'aartool_checks{{host="{esc(host)}",status="{st.lower()}"}} {n}')
+    out.append("# HELP aartool_check_open 1 for every check that is currently WARN or FAIL.")
+    out.append("# TYPE aartool_check_open gauge")
+    for r in results:
+        if r["status"] in ("WARN", "FAIL"):
+            out.append(f'aartool_check_open{{host="{esc(host)}",id="{esc(r["id"])}",status="{r["status"].lower()}"}} 1')
+    sys.stdout.write("\n".join(out) + "\n")
+PY
+  then
+    rm -f "$tmp"
+    die "export failed; nothing was written."
+  fi
+
+  if [[ -n "$out" ]]; then
+    mv "$tmp" "$out"
+    success "Wrote $out ($fmt)"
+  else
+    cat "$tmp"; rm -f "$tmp"
+  fi
+}
+
 # ── install ──────────────────────────────────────────────────────────────────
 # A SYMLINK, not a copy, and that is not a detail.
 #
@@ -3935,6 +4105,7 @@ main() {
     paths)          shift; cmd_paths "$@" ;;
     badge)          shift; cmd_badge "$@" ;;
     demo)           shift; cmd_demo "$@" ;;
+    export)         shift; cmd_export "$@" ;;
     install)        shift; cmd_install "$@" ;;
     # `aartool uninstall` is what people type. It used to be an unknown command,
     # which is a poor answer when the thing they want exists behind a flag.
