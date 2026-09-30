@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`action.yml`**, a composite GitHub Action that audits the runner, uploads
   SARIF and can fail the job on a complete attack chain, plus a
   `workflow_dispatch` self-audit workflow that exercises it end to end.
+- **`paths` across an estate**: `aartool paths a.json b.json c.json` reports
+  each chain as complete on N of M hosts, names the smallest change that breaks
+  it on all of them, and flags the ids that need a decision before they can be
+  applied. It refuses two reports for the same host rather than counting it
+  twice.
+- **`paths --format mermaid`**: the chains as a diagram, for a README or a pull
+  request comment. Only static labels and check ids reach the output; the
+  hostname is the one attacker-influenced string and is reduced to a safe
+  character set.
+- **An Attack paths panel in the dashboard**, showing the same chains across
+  every loaded report. Its chain definitions are a JavaScript restatement of
+  `_paths_chains`, because the page has no shell to call, and a guard compares
+  the two so the copy cannot go stale silently.
 
 ### Fixed
 
@@ -50,6 +63,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The bundled demo sample was a copy of the test fixture**, carrying French
   remediation text and em dashes into the file the README points at. It is now
   a real audit of a partially hardened host, with only the hostname changed.
+- **A stage of "the local climb" could not be falsified.** It held AUTH-06,
+  never-logged-in accounts found, which is a warning on essentially every Linux
+  system because system accounts never log in, so the stage was open on every
+  host and the chain was complete regardless of how hardened the machine was.
+  The tool then advised AUTH-06 as the cheapest link to cut, which does nothing
+  about a kernel escalation. The chain's premise is already "any foothold", so
+  a stage about ways to get one restated it. Removed: the climb is now a kernel
+  doorway and nothing containing it, and it breaks on a host with a MAC policy.
+- **The Mermaid diagram rendered in reverse.** Mermaid lays subgraphs out
+  against the flow direction, so under `flowchart LR` they stack in reverse
+  declaration order and the front door appeared at the bottom. The generator
+  emits the last chain first to compensate.
 
 ### Changed
 
