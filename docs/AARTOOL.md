@@ -683,8 +683,43 @@ alone is a "medium". Together they are the incident.
 
 ```bash
 aartool paths            # which attack chains are complete on this host?
+aartool paths --detail   # every finding under every stage
 aartool paths || exit 1  # fail a CI job while any chain is complete
 ```
+
+The default is one screen: the verdict, one pipeline per complete chain with how
+many findings are open at each stage, and the link to cut. Broken chains follow
+as a single line naming the stage that is closed.
+
+```
+  Attack paths  demo-server-01
+  Derived from reports/aartool-demo-server-01-20260930-114920.json. Nothing was scanned or changed.
+  3 of 4 chains are complete. Cut one link in each.
+
+  ● COMPLETE  The local climb: any shell to root
+    Find a kernel doorway ▸ Nothing contains the exploit
+    3 open                  1 open
+    cut  KRN-12  Primary LPE doorways open
+
+  ● COMPLETE  The silent tenant: root to never found
+    Persist below the OS ▸ Nobody is recording ▸ Nobody would notice a change
+    4 open                 3 open                4 open
+    cut  KRN-06  kexec allowed
+
+  ○  The front door: internet to root   broken: "Land as root, or become it" is closed
+
+  aartool explain <ID>  why a link matters
+  --detail  every finding   --format mermaid  a diagram
+```
+
+The view sizes itself to the terminal: stages side by side when they fit,
+stacked when they do not, and one layout for the whole screen rather than a mix
+of two. Outside a UTF-8 locale the glyphs fall back to `*`, `o` and `>`, because
+there is no way to un-print a line of boxes on a serial console.
+
+`--detail` prints every finding under every stage. That is the depth you want
+once you are working a chain, and the wrong first thing to read, which is why it
+is not the default:
 
 ```
 ● COMPLETE  The silent tenant: root to never found
@@ -693,6 +728,9 @@ aartool paths || exit 1  # fail a CI job while any chain is complete
    [3] Nobody would notice       open   INT-01 INT-02 LOG-08
    A safe link to cut: KRN-06  kexec allowed
 ```
+
+`--all` adds the broken chains to `--detail`; the default view always lists
+them.
 
 Breaking **one** link breaks the chain, so you can stop fixing everything and
 fix the cheapest thing that matters. Read-only, derived from the audit alone.

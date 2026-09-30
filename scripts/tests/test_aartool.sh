@@ -490,7 +490,8 @@ _fx="../dashboard/demo-audit.json"
 _pout=$($AARTOOL paths "$_fx" 2>&1); _prc=$?
 check "paths finds a complete chain in the sample" "$_pout" "COMPLETE"
 check "paths exits 1 when a chain is complete"     "rc=$_prc" "rc=1"
-check "paths names a link to cut"                  "$_pout" "link to cut"
+check "paths names a link to cut"                  "$_pout" "  cut  "
+check "paths --detail names a safe link to cut"    "$($AARTOOL paths "$_fx" --detail 2>&1)" "link to cut"
 check "paths help"  "$($AARTOOL paths --help 2>&1)" "attack"
 
 # Every check ID named in a chain must be a check the baseline actually emits.
@@ -760,6 +761,115 @@ check_exact "mermaid: a hostname keeps only safe characters" \
 check "mermaid needs one report" \
   "$($AARTOOL paths "$_pdir/a.json" "$_pdir/b.json" --format mermaid 2>&1)" "single report"
 rm -rf "$_pdir"
+
+# ── paths: the one-screen view ───────────────────────────────────────────────
+# Two reports the sample cannot stand in for: a host with nothing open, which
+# is the only way to see every chain rendered broken, and a host whose check
+# names are longer than any terminal.
+_vdir=$(mktemp -d)
+python3 - "$_fx" "$_vdir" <<'PY3'
+import json, sys
+src = json.load(open(sys.argv[1]))
+def body(d): return d.get("aartool") or d["cyberaar_baseline"]
+
+g = json.loads(json.dumps(src)); b = body(g); b["host"] = "all-green-01"
+for r in b["results"]:
+    r["status"] = "PASS"
+json.dump(g, open(f"{sys.argv[2]}/all-pass.json", "w"))
+
+l = json.loads(json.dumps(src)); b = body(l); b["host"] = "long-names-01"
+for r in b["results"]:
+    r["check"] = r["check"] + " " + "and a tail no terminal is wide enough for " * 4
+json.dump(l, open(f"{sys.argv[2]}/long-names.json", "w"))
+PY3
+check_exact "the one-screen fixtures were actually built" \
+  "$(ls "$_vdir"/*.json 2>/dev/null | wc -l)" "2"
+check_exact "the all-pass fixture really has no chain complete" \
+  "$($AARTOOL paths "$_vdir/all-pass.json" >/dev/null 2>&1; echo "rc=$?")" "rc=0"
+
+
+# The point of the default view is that it fits on a screen and reads as one
+# shape. Both are properties of the output, so both are asserted on the output.
+# The budget: 28 lines at the widest layout today, against a ceiling of 30. A
+# fifth chain does not fit, which is the answer this guard exists to give.
+_n_complete=$($AARTOOL paths "$_fx" --detail 2>/dev/null | grep -c '● COMPLETE' || true)
+_one=$($AARTOOL paths "$_fx" 2>&1)
+check "one-screen view is short enough for a screen" \
+  "$([[ $(wc -l <<<"$_one") -le 30 ]] && echo fits || echo "too long: $(wc -l <<<"$_one") lines")" "fits"
+check_exact "one-screen view has one COMPLETE line per complete chain" \
+  "$(grep -c 'COMPLETE' <<<"$_one")" "$_n_complete"
+check "one-screen view says how many chains are complete" "$_one" "of 4 chains are complete"
+# The read-only claim and the report the answer came from. report_resolve picks
+# a report when none is named, so the default view is the only place that
+# choice is visible, and it was missing from it.
+check "one-screen view names the report it read"    "$_one" "Derived from"
+check "one-screen view keeps the read-only claim"   "$_one" "Nothing was scanned or changed."
+_detail_lines=$($AARTOOL paths "$_fx" --detail 2>&1 | wc -l)
+check "the detail view is still the long one" \
+  "$([[ $_detail_lines -gt 40 ]] && echo long || echo "only $_detail_lines lines")" "long"
+
+# Width decides the shape. Narrow terminals are tested on a real pty, not by
+# setting COLUMNS, because that is how the last narrow-terminal bug got through:
+# a check that asks "is stdout a terminal" is false inside $(...), and COLUMNS
+# does not exercise it.
+if command -v script >/dev/null 2>&1; then
+  # ANSI stripped: the pty is a terminal, so colour is on, and the assertions
+  # are about layout.
+  _wide=$(script -qc "stty cols 110 rows 40; $AARTOOL paths $_fx" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
+  _narrow=$(script -qc "stty cols 60 rows 40; $AARTOOL paths $_fx" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
+  check "wide pty: two stages share one line" "$_wide" "Find a kernel doorway "
+  # A GitHub Actions step runs with no TERM, and tput will not start without
+  # one, so the width came back empty and every run in CI rendered at 80 while
+  # every local run was correct. The guard above could only catch that on a
+  # runner; this one catches it on the machine the change is written on.
+  _noterm=$(script -qc "stty cols 110 rows 40; env -u TERM $AARTOOL paths $_fx" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
+  check_exact "the width is found with TERM unset, not defaulted to 80" \
+    "$(grep -c 'Find a kernel doorway .* Nothing contains the exploit' <<<"$_noterm")" "1"
+  check "wide pty: the stages are joined by an arrow on that line" \
+    "$(grep -c 'Find a kernel doorway .* Nothing contains the exploit' <<<"$_wide")" "1"
+  # Only the lines the layout controls. A chain name is data: it is printed
+  # whole at any width, so folding it into this count would make the guard fail
+  # the day someone names a chain eleven characters longer, for a reason that
+  # has nothing to do with layout.
+  check_exact "narrow pty: no laid-out line is wider than the terminal" \
+    "$(grep -E '^ {4}' <<<"$_narrow" | awk '{ if (length($0) > 60) n++ } END { print n+0 }')" "0"
+  check_exact "narrow pty: stages are stacked, not joined" \
+    "$(grep -c 'Find a kernel doorway .* Nothing contains' <<<"$_narrow")" "0"
+
+  # One layout per screen applies to broken chains too. A fully hardened host
+  # is nothing but broken chains, and their names differ by ten characters, so
+  # deciding the wrap per chain gave that host a ragged mix of one-line and
+  # two-line entries at 80 columns, the width every non-tty gets.
+  _green="$_vdir/all-pass.json"
+  for _w in 100 80 60; do
+    _g=$(script -qc "stty cols $_w rows 40; $AARTOOL paths $_green" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
+    # Every broken chain is inline, or every one is wrapped: never both.
+    _inline=$(grep -c 'broken: .* is closed' <<<"$_g" || true)
+    _wrapped=$(grep -cE '^ {5}broken: .* is closed' <<<"$_g" || true)
+    check_exact "hardened host at $_w cols: broken chains all share one shape" \
+      "$([[ $_wrapped -eq 0 || $_wrapped -eq $_inline ]] && echo uniform || echo "mixed: $_wrapped of $_inline wrapped")" "uniform"
+  done
+
+  # The check name is unbounded, so it is the one thing that must be trimmed at
+  # any width. Asserted against a report whose names are far longer than any
+  # terminal, which is the case the original guard could not reach.
+  for _w in 100 60; do
+    _l=$(script -qc "stty cols $_w rows 40; $AARTOOL paths $_vdir/long-names.json" /dev/null 2>&1 | tr -d '\r' | sed 's/\x1b\[[0-9;]*m//g')
+    check_exact "long check names are trimmed to $_w columns" \
+      "$(grep -E '^ {4}cut ' <<<"$_l" | awk -v w=$_w '{ if (length($0) > w) n++ } END { print n+0 }')" "0"
+    check "the cut line still names the id at $_w columns" "$_l" "cut  KRN-12"
+  done
+else
+  FAIL=$((FAIL+1)); printf 'FAIL  script(1) is missing, so the narrow-terminal guard cannot run\n'
+fi
+
+rm -rf "$_vdir"
+
+# Without UTF-8 the view must not print a byte a serial console cannot draw.
+_ascii=$(LC_ALL=C LANG=C $AARTOOL paths "$_fx" 2>&1)
+check "the C locale still gets the view" "$_ascii" "COMPLETE"
+check_exact "the C locale output is pure ASCII" \
+  "$(printf '%s' "$_ascii" | LC_ALL=C grep -c -P '[^\x00-\x7F]' || true)" "0"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
