@@ -1,0 +1,50 @@
+---
+# aartool auditing the runner it is built on, through its own action.
+#
+# This is the only place the action is exercised end to end: composite-action
+# steps, sudo, report discovery, the SARIF upload and the Security tab. Testing
+# it any other way tests a simulation of a runner rather than a runner.
+#
+# workflow_dispatch rather than on: push. A GitHub-hosted runner is a fresh,
+# deliberately unhardened image, so a complete attack chain is the expected
+# result and would fail every push if this gated them. fail-on-chain is false
+# here for that reason: the point is the SARIF, not a red build. Note that an
+# unreadable report still fails the job, because that is exit 2, and the action
+# treats it as a fault whatever fail-on-chain says.
+name: Self audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      fail-on-chain:
+        description: Fail the job when a complete attack chain is found
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+  security-events: write   # upload-sarif writes to the Security tab
+
+jobs:
+  audit:
+    name: Audit the runner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Run aartool
+        uses: ./
+        with:
+          fail-on-chain: ${{ inputs.fail-on-chain }}
+          sarif-file: aartool.sarif
+
+      # if: always() so a complete chain with fail-on-chain: true still uploads
+      # the findings. A gate that fails without saying what it found is a gate
+      # people disable.
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52  # v3
+        with:
+          sarif_file: aartool.sarif
+          category: aartool

@@ -632,7 +632,18 @@ fi
 # unreadable case.
 sed 's/"ansible_remediation"/"XX_no_such_key"/' "$_fx" > "$_jdir/broken.json"
 $AARTOOL paths "$_jdir/broken.json" >/dev/null 2>&1
-check_exact "paths on an unreadable report does not exit 0" "$?" "1"
+check_exact "paths on an unreadable report does not exit 0" "$?" "2"
+$AARTOOL paths "$_jdir/no-such-file.json" >/dev/null 2>&1
+check_exact "paths on a missing report exits 2, not 1"      "$?" "2"
+# 1 is the SIGNAL, 2 is the absence of one, and the action keys on the
+# difference: fail-on-chain: false may ignore a 1, never a 2. diff already
+# uses this convention.
+$AARTOOL paths "$_fx" >/dev/null 2>&1
+check_exact "paths on a readable report with a chain exits 1" "$?" "1"
+check "the paths help documents exit 2" "$($AARTOOL paths --help 2>&1)" "could not be read"
+# The action has to act on that difference, or the contract is decorative.
+check "action.yml fails the job on exit 2 whatever fail-on-chain says" \
+  "$(grep -A2 'rc.*-eq 2' ../action.yml)" "exit 2"
 rm -rf "$_jdir"
 
 check "demo runs without root and shows the loop" "$($AARTOOL demo 2>&1)" "Now the real thing"

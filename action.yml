@@ -37,6 +37,16 @@ runs:
       run: |
         rc=0
         bash "${{ github.action_path }}/scripts/aartool" paths "$AARTOOL_REPORT" || rc=$?
-        if [[ "$rc" -ne 0 && "${{ inputs.fail-on-chain }}" == "true" ]]; then
-          exit "$rc"
+        # 2 means the report could not be read, so neither answer was reached.
+        # That is a broken job whatever fail-on-chain says: treating it as
+        # "no chain is complete" is how a gate goes green on nothing.
+        if [[ "$rc" -eq 2 ]]; then
+          echo "::error::aartool paths could not read $AARTOOL_REPORT"
+          exit 2
+        fi
+        if [[ "$rc" -eq 1 ]]; then
+          echo "::warning::aartool found a complete attack chain"
+          if [[ "${{ inputs.fail-on-chain }}" == "true" ]]; then
+            exit 1
+          fi
         fi
