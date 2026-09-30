@@ -6,6 +6,7 @@ fix, and prove afterwards that only what you intended changed.**
 Nothing is modified unless you type `apply`.
 
 ```bash
+aartool demo                            # thirty-second tour. No root, changes nothing.
 sudo aartool inspect                    # 109 checks. Changes nothing.
 aartool advise                          # what to fix first, and what each fix costs
 aartool explain KRN-01                  # why it matters, and what closing it breaks
@@ -265,6 +266,9 @@ to filter the mail.
 | `doctor` | Check everything `plan` and `apply` depend on. Non-zero if anything is missing, so it works as a CI gate. |
 | `report` | Bake reports into one self-contained HTML file, or serve the dashboard. |
 | `diff` | What changed between two audits. |
+| `paths` | How an attacker would chain your findings into a complete attack, and a link to cut. Exits 1 when a chain is complete, so it gates CI. |
+| `badge` | A self-contained SVG hardening badge for your README, from an audit. |
+| `demo` | The whole loop on a bundled sample audit. No root, no SSH, changes nothing. |
 | `install` | Put `aartool` on your PATH. |
 | `uninstall` | Remove it again. On a packaged install it points you at `apt remove` instead. |
 

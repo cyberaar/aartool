@@ -120,6 +120,9 @@ Commands:
   doctor      Check everything plan and apply depend on.
   report      Visualise audit reports, or bake them into one shareable file.
   diff        What changed between two audits. Exits non-zero on a regression.
+  paths       How an attacker would chain your findings, and the link to cut.
+  badge       An SVG hardening badge for your README, from an audit.
+  demo        See the loop on a bundled sample. No root, changes nothing.
   install     Put aartool on your PATH.
   uninstall   Remove the symlink install created.
 
@@ -1675,6 +1678,52 @@ E
 
   *) return 1 ;;
   esac
+}
+
+# ── Reading an audit report without jq ───────────────────────────────────────
+# Shared by paths, badge and demo. advise carries its own copy of this parse for
+# historical reasons; the format is the same one it documents.
+
+# Print "ID|STATUS|CHECK" for every result in a report.
+report_records() {
+  local report="$1" recs
+  recs=$(tr -d '\n' < "$report" \
+    | grep -oP '"results":\s*\[\K.*?(?=\]\s*,\s*"ansible_remediation")' \
+    | sed 's/},{/}\n{/g') || true
+  [[ -n "$recs" ]] || return 1
+  local rec id st ck
+  while IFS= read -r rec; do
+    [[ -n "$rec" ]] || continue
+    id=$(grep -oP '"id":"\K[^"]*'     <<<"$rec" || true)
+    st=$(grep -oP '"status":"\K[^"]*' <<<"$rec" || true)
+    ck=$(grep -oP '"check":"\K[^"]*'  <<<"$rec" || true)
+    printf '%s|%s|%s\n' "$id" "$st" "$ck"
+  done <<<"$recs"
+}
+
+# Newest report aartool inspect wrote, from the same pool advise searches.
+report_newest() {
+  local f
+  f=$(find . ./reports /var/log/cyberaar -maxdepth 1 \( -name 'aartool-*.json' -o -name 'cyberaar-*.json' \) -type f -print0 2>/dev/null \
+      | xargs -0 -r ls -t 2>/dev/null | head -1) || true
+  [[ -n "$f" ]] && printf '%s' "$f"
+  return 0
+}
+
+# Resolve an optional report argument to a readable, plausible report path.
+report_resolve() {
+  local report="${1:-}"
+  if [[ -z "$report" ]]; then
+    report="$(report_newest)"
+    [[ -n "$report" ]] || die "No audit report given, and none found in ., ./reports or /var/log/cyberaar.
+        Produce one first:   sudo aartool inspect
+        Or see it work first: aartool demo"
+    info "Using the most recent report found: $report" >&2
+  fi
+  [[ -f "$report" ]] || die "No such report: $report"
+  grep -qE '"(aartool|cyberaar_baseline)"' "$report" \
+    || die "$report does not look like an aartool audit report (it must be the JSON, not the HTML)."
+  printf '%s' "$report"
 }
 
 # ── inspect ──────────────────────────────────────────────────────────────────
@@ -3261,6 +3310,239 @@ sys.exit(1 if regressed else 0)
 PY
 }
 
+# ── paths ────────────────────────────────────────────────────────────────────
+# A list of findings tells you what is wrong. An attacker does not exploit a
+# list, they walk a chain: a way in, a way up, a way to stay, a way to not be
+# seen. Each link alone is a "medium". Together they are the incident.
+#
+# `paths` reads an audit and shows which chains are actually complete on THIS
+# host, and the cheapest link to cut in each. Everything is derived from the
+# audit's own results; nothing is scanned or changed.
+#
+# A stage counts as OPEN when at least one of its findings is FAIL or WARN. A
+# chain is COMPLETE when every stage is open: that is the one to read first.
+
+# CHAIN|name|intro, then STAGE|label|why|ID,ID,... lines.
+_paths_chains() {
+  cat <<'CHAINS'
+CHAIN|The front door: internet to root|An anonymous attacker, a wordlist and patience.
+STAGE|Reach a login|SSH answers the network and nothing filters who asks|NET-01,SSH-02,SSH-01
+STAGE|Guess without being stopped|Unlimited attempts and nothing bans the source|SSH-03,INT-06
+STAGE|Turn the account into root|A shell that can sudo without a password is already root|AUTH-05,AUTH-09,AUTH-04
+CHAIN|The local climb: any shell to root|A stolen key, a web-app RCE, a compromised CI job. Any foothold.
+STAGE|Have a local shell|Password logins and forwarding widen who can get one|SSH-02,SSH-04,AUTH-05
+STAGE|Find a kernel doorway|One unprivileged-only bug is enough, and these are the doors|KRN-01,KRN-03,KRN-12,KRN-10
+STAGE|Nothing contains the exploit|No MAC policy, so root is root|SYS-04
+CHAIN|The silent tenant: root to never found|What happens after root, and why you would not hear about it.
+STAGE|Persist below the OS|Modules and kexec load code the OS never vouched for|KRN-05,KRN-06,KRN-08,SYS-08
+STAGE|Nobody is recording|No audit trail, so nothing to replay|LOG-01,LOG-06,LOG-02
+STAGE|Nobody would notice a change|No integrity monitor, no off-box logs|INT-01,INT-02,LOG-08
+CHAIN|The pivot: one box to the next|How a compromised host becomes a stepping stone.
+STAGE|Tunnel out through it|Forwarding lets the host relay for an attacker|SSH-04,NET-02
+STAGE|Spoof or redirect on the wire|Redirects and martians accepted, and unlogged|NET-07,NET-10,NET-08
+STAGE|No default-deny on the way out|Nothing constrains where the host may talk|NET-01,NET-13
+CHAINS
+}
+
+_paths_usage() {
+  cat <<'EOF'
+aartool paths: how an attacker would actually chain your findings
+
+Usage:
+  aartool paths [REPORT.json] [options]
+
+Options:
+  --all        Also show chains that are broken (some stage fully closed)
+  -h, --help   This help
+
+Exit codes:
+  0   no complete attack chain
+  1   at least one chain is complete end to end (useful as a CI gate)
+
+With no argument it uses the newest report `inspect` wrote. Read-only.
+EOF
+}
+
+# Print one chain. Globals from cmd_paths: ST, CK, show_all, complete.
+_paths_render() {
+  local name="$1" intro="$2"; shift 2
+  local -n _lbl="$1" _why="$2" _ids="$3"
+  local n=${#_lbl[@]} open_n=0 i x y
+  local -a open_ids=()
+  for ((i=0; i<n; i++)); do
+    local hit=""
+    for x in ${_ids[i]//,/ }; do
+      [[ "${ST[$x]:-}" == "FAIL" || "${ST[$x]:-}" == "WARN" ]] && hit="$hit $x"
+    done
+    open_ids[i]="${hit# }"
+    [[ -n "${open_ids[i]}" ]] && open_n=$((open_n+1))
+  done
+  local whole=0; [[ $open_n -eq $n ]] && whole=1
+  [[ $whole -eq 0 && $show_all -eq 0 ]] && return 0
+  [[ $whole -eq 1 ]] && complete=$((complete+1))
+
+  if [[ $whole -eq 1 ]]; then
+    printf '\n%s● COMPLETE%s  %s%s%s\n' "$RED" "$RESET" "$BOLD" "$name" "$RESET"
+  else
+    printf '\n%s○ broken (%d of %d stages open)%s  %s%s%s\n' "$GREEN" "$open_n" "$n" "$RESET" "$BOLD" "$name" "$RESET"
+  fi
+  printf '  %s%s%s\n\n' "$CYAN" "$intro" "$RESET"
+
+  local cut=""
+  for ((i=0; i<n; i++)); do
+    if [[ -n "${open_ids[i]}" ]]; then
+      printf '   %s[%d] %-32s open%s\n' "$RED" $((i+1)) "${_lbl[i]}" "$RESET"
+      printf '       %s\n' "${_why[i]}"
+      for y in ${open_ids[i]}; do
+        printf '         %s%-8s%s %s\n' "$YELLOW" "$y" "$RESET" "${CK[$y]:-}"
+      done
+      if [[ -z "$cut" ]]; then
+        for y in ${open_ids[i]}; do
+          _advise_costly "$y" || { cut="$y"; break; }
+        done
+      fi
+    else
+      printf '   %s[%d] %-32s closed%s\n' "$GREEN" $((i+1)) "${_lbl[i]}" "$RESET"
+    fi
+  done
+  if [[ $whole -eq 1 ]]; then
+    if [[ -n "$cut" ]]; then
+      printf '\n   %sA safe link to cut:%s %s  %s\n' "$BOLD" "$RESET" "$cut" "${CK[$cut]:-}"
+      printf '   %saartool explain %s%s\n' "$CYAN" "$cut" "$RESET"
+    else
+      printf '\n   %sEvery open link here needs a decision first.%s  aartool advise\n' "$BOLD" "$RESET"
+    fi
+  fi
+}
+
+cmd_paths() {
+  local report="" show_all=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) _paths_usage; return 0 ;;
+      --all)     show_all=1; shift ;;
+      -*)        die "Unknown option for paths: $1. Try 'aartool paths --help'." ;;
+      *)         report="$1"; shift ;;
+    esac
+  done
+  report="$(report_resolve "$report")"
+
+  local -A ST=() CK=()
+  local id st ck recs
+  recs="$(report_records "$report")" || die "Could not read any results out of $report."
+  while IFS='|' read -r id st ck; do
+    ST["$id"]="$st"; CK["$id"]="$ck"
+  done <<<"$recs"
+
+  local host; host=$(grep -oP '"host":\s*"\K[^"]*' "$report" | head -1 || true)
+  printf '\n%sAttack paths on %s%s\n' "$BOLD" "${host:-this host}" "$RESET"
+  printf '  Derived from %s. Nothing was scanned or changed.\n' "$report"
+
+  local complete=0 kind a b c name="" intro=""
+  local -a lbl=() why=() ids=()
+  while IFS='|' read -r kind a b c; do
+    case "$kind" in
+      CHAIN)
+        [[ -n "$name" ]] && _paths_render "$name" "$intro" lbl why ids
+        name="$a"; intro="$b"; lbl=(); why=(); ids=() ;;
+      STAGE) lbl+=("$a"); why+=("$b"); ids+=("$c") ;;
+    esac
+  done < <(_paths_chains)
+  [[ -n "$name" ]] && _paths_render "$name" "$intro" lbl why ids
+
+  printf '\n'
+  if [[ $complete -eq 0 ]]; then
+    success "No attack chain is complete on this host. Closing any one link keeps it that way."
+    return 0
+  fi
+  printf '%s%d complete chain(s).%s Breaking one link per chain is enough; you do not need to fix everything.\n\n' \
+    "$BOLD" "$complete" "$RESET"
+  return 1
+}
+
+# ── badge ────────────────────────────────────────────────────────────────────
+# A self-contained SVG for a README or a wiki, no third-party service involved.
+# Generated from the audit's score, so the number on the badge is one you can
+# reproduce with `aartool inspect`.
+
+_badge_usage() {
+  cat <<'EOF'
+aartool badge: an SVG hardening badge from an audit
+
+Usage:
+  aartool badge [REPORT.json] [--out FILE.svg] [--label TEXT]
+
+Writes ./aartool-badge.svg by default and prints the Markdown to embed it.
+EOF
+}
+
+cmd_badge() {
+  local report="" out="aartool-badge.svg" label="hardening"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) _badge_usage; return 0 ;;
+      --out)     out="${2:-}"; [[ -n "$out" ]] || die "--out needs a file."; shift 2 ;;
+      --label)   label="${2:-}"; [[ -n "$label" ]] || die "--label needs text."; shift 2 ;;
+      -*)        die "Unknown option for badge: $1. Try 'aartool badge --help'." ;;
+      *)         report="$1"; shift ;;
+    esac
+  done
+  report="$(report_resolve "$report")"
+  local score; score=$(grep -oP '"score":\s*\K[0-9]+' "$report" | head -1 || true)
+  [[ -n "$score" ]] || die "No score in $report."
+  # The label is user text going into XML.
+  label=${label//&/&amp;}; label=${label//</&lt;}; label=${label//>/&gt;}
+
+  local color="#e05d44"
+  (( score >= 50 )) && color="#dfb317"
+  (( score >= 75 )) && color="#97ca00"
+  (( score >= 90 )) && color="#4c1"
+  local val="${score}/100"
+  local lw=$(( ${#label} * 7 + 12 )) vw=$(( ${#val} * 7 + 12 ))
+  local w=$((lw + vw))
+  cat > "$out" <<SVG
+<svg xmlns="http://www.w3.org/2000/svg" width="$w" height="20" role="img" aria-label="$label: $val">
+  <title>$label: $val</title>
+  <linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
+  <clipPath id="r"><rect width="$w" height="20" rx="3" fill="#fff"/></clipPath>
+  <g clip-path="url(#r)"><rect width="$lw" height="20" fill="#555"/><rect x="$lw" width="$vw" height="20" fill="$color"/><rect width="$w" height="20" fill="url(#s)"/></g>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">
+    <text x="$((lw/2))" y="14">$label</text><text x="$((lw + vw/2))" y="14">$val</text>
+  </g>
+</svg>
+SVG
+  success "Wrote $out  (score $score)"
+  printf '  Embed:  ![%s](%s)\n' "$label" "$out"
+}
+
+# ── demo ─────────────────────────────────────────────────────────────────────
+# The loop, on a bundled sample audit: no root, no SSH, no Ansible, nothing
+# touched. It exists so someone can see what aartool is in thirty seconds
+# before deciding whether to point it at a machine.
+
+cmd_demo() {
+  case "${1:-}" in
+    -h|--help) printf 'aartool demo: tour the audit loop on a bundled sample. Changes nothing.\n'; return 0 ;;
+  esac
+  resolve_paths
+  local sample; sample="$(dirname "$TOOLKIT_DASHBOARD")/demo-audit.json"
+  [[ -f "$sample" ]] || die "Sample audit not found: $sample"
+
+  banner
+  printf '%sA sample audit of a made-up Ubuntu server. Nothing on this machine is read or changed.%s\n' "$BOLD" "$RESET"
+
+  printf '\n%s$ aartool advise%s   # what to fix first, and what each fix costs\n' "$CYAN" "$RESET"
+  cmd_advise "$sample" --wave 1 || true
+
+  printf '\n%s$ aartool paths%s    # how the findings chain into an attack\n' "$CYAN" "$RESET"
+  cmd_paths "$sample" || true
+
+  printf '\n%s$ aartool explain KRN-01%s   # what closing it breaks\n' "$CYAN" "$RESET"
+  cmd_explain KRN-01 || true
+
+  printf '\n%sNow the real thing:%s  sudo aartool inspect   then   aartool advise   and   aartool paths\n\n' "$BOLD" "$RESET"
+}
+
 # ── install ──────────────────────────────────────────────────────────────────
 # A SYMLINK, not a copy, and that is not a detail.
 #
@@ -3390,6 +3672,9 @@ main() {
     doctor)         shift; cmd_doctor "$@" ;;
     report)         shift; cmd_report "$@" ;;
     diff)           shift; cmd_diff "$@" ;;
+    paths)          shift; cmd_paths "$@" ;;
+    badge)          shift; cmd_badge "$@" ;;
+    demo)           shift; cmd_demo "$@" ;;
     install)        shift; cmd_install "$@" ;;
     # `aartool uninstall` is what people type. It used to be an unknown command,
     # which is a poor answer when the thing they want exists behind a flag.

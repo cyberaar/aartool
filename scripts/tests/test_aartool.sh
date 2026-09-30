@@ -482,5 +482,26 @@ else
 fi
 check "summary points at advise"   "$(cat $_term)"  'aartool advise'
 
+# ── paths, badge, demo ───────────────────────────────────────────────────────
+_fx="../dashboard/demo-audit.json"
+_pout=$($AARTOOL paths "$_fx" 2>&1); _prc=$?
+check "paths finds a complete chain in the sample" "$_pout" "COMPLETE"
+check "paths exits 1 when a chain is complete"     "rc=$_prc" "rc=1"
+check "paths names a link to cut"                  "$_pout" "link to cut"
+check "paths help"  "$($AARTOOL paths --help 2>&1)" "attack"
+_bdir=$(mktemp -d)
+$AARTOOL badge "$_fx" --out "$_bdir/b.svg" >/dev/null 2>&1
+check "badge writes an svg with the score" "$(cat "$_bdir/b.svg" 2>/dev/null)" "38/100"
+# The colour bands: derive each report from the real fixture by changing only
+# the score, so the badge's parse is exercised on the producer's shape.
+for _band in "95 #4c1" "80 #97ca00" "55 #dfb317" "10 #e05d44"; do
+  set -- $_band
+  sed "s/\"score\": 38/\"score\": $1/" "$_fx" > "$_bdir/s.json"
+  $AARTOOL badge "$_bdir/s.json" --out "$_bdir/s.svg" >/dev/null 2>&1
+  check "badge colour for score $1" "$(cat "$_bdir/s.svg" 2>/dev/null)" "$2"
+done
+rm -rf "$_bdir"
+check "demo runs without root and shows the loop" "$($AARTOOL demo 2>&1)" "Now the real thing"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

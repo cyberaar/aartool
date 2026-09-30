@@ -674,3 +674,31 @@ watch the test go red, then put it back.
 - **It does not replace your distribution's patching.** Red Hat and Debian ship
   the patch. `surface` is for the window before the patch exists, and for the
   machine you cannot reboot until the change window in three weeks.
+
+## paths, badge and demo
+
+A list of 40 findings ranks nothing. An attacker does not exploit a list; they
+walk a chain of *way in, way up, way to stay, way to not be seen*. Each link
+alone is a "medium". Together they are the incident.
+
+```bash
+aartool paths            # which attack chains are complete on this host?
+aartool paths || exit 1  # fail a CI job while any chain is complete
+```
+
+```
+● COMPLETE  The silent tenant: root to never found
+   [1] Persist below the OS      open   KRN-05 KRN-06 KRN-08
+   [2] Nobody is recording       open   LOG-01 LOG-06 LOG-02
+   [3] Nobody would notice       open   INT-01 INT-02 LOG-08
+   A safe link to cut: KRN-06  kexec allowed
+```
+
+Breaking **one** link breaks the chain, so you can stop fixing everything and
+fix the cheapest thing that matters. Read-only, derived from the audit alone.
+
+`aartool badge [REPORT.json] [--out FILE.svg]` writes a self-contained SVG of the
+score (red under 50, amber to 74, green to 89, bright green from 90) and prints
+the Markdown to embed it. `aartool demo` runs `advise`, `paths` and `explain`
+on a bundled sample audit: no root, no SSH, nothing read from the machine.
+
