@@ -17,7 +17,7 @@
 # =============================================================================
 
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
-SCRIPT_VERSION="4.8.4"
+SCRIPT_VERSION="4.8.5"
 SCRIPT_NAME="aartool-baseline"
 
 _show_help() {
@@ -2101,10 +2101,29 @@ else
     "Audit: 'crontab -l' and /etc/cron*, look for wget/curl/bash fetching into /tmp."
 fi
 
-# INT-04 Open listening ports (always informational, manual review required)
-LISTEN_PORTS=$(ss -tlnp 2>/dev/null | grep -c "LISTEN" || echo "?")
-add_result "Integrity" "WARN" "INT-04" "Open listening ports" "Ports en écoute (revue manuelle)" "$LISTEN_PORTS port(s) listening" \
-  "Manual review required: 'ss -tlnp', then close every port that is not justified."
+# INT-04 Open listening ports (informational, manual review required).
+# A bare count is not reviewable: what matters is which services face the
+# network. Separate the listeners bound to ALL interfaces (0.0.0.0 / :: / *) --
+# reachable from every network the host is on, held off each one only by a
+# firewall -- from those bound to loopback, and name the all-interface ports so
+# the reviewer sees the actual surface rather than a number. Still unmapped:
+# binding a service to the right interface is app-specific, not a role a
+# playbook can apply safely, so this stays a human review.
+INT04_LISTEN=$(ss -tlnH 2>/dev/null || true)
+INT04_ALLP=$(printf '%s\n' "$INT04_LISTEN" | awk '{print $4}' \
+  | grep -E '^(0\.0\.0\.0|\*|\[::\]):[0-9]+$' | sed -E 's/.*:([0-9]+)$/\1/' \
+  | sort -un | tr '\n' ' ' | sed 's/ *$//')
+INT04_ALL=$(printf '%s' "$INT04_ALLP" | wc -w | tr -d ' ')
+INT04_LO=$(printf '%s\n' "$INT04_LISTEN" | awk '{print $4}' | grep -cE '^(127\.|\[::1\])' || true)
+INT04_LO=${INT04_LO:-0}
+if [[ "$INT04_ALL" -gt 0 ]]; then
+  INT04_DETAIL="$INT04_ALL on all interfaces (ports: $INT04_ALLP), $INT04_LO loopback-only"
+else
+  INT04_TOTAL=$(printf '%s\n' "$INT04_LISTEN" | grep -c . || true)
+  INT04_DETAIL="${INT04_TOTAL:-0} listening, none on all interfaces ($INT04_LO loopback-only)"
+fi
+add_result "Integrity" "WARN" "INT-04" "Open listening ports" "Ports en écoute (revue manuelle)" "$INT04_DETAIL" \
+  "Manual review: 'ss -tlnp'. Every all-interfaces (0.0.0.0/::) listener is reachable from every network the host is on, limited only by the firewall; bind services that need only local or one-network access to 127.0.0.1 or that interface, and close the rest."
 
 # INT-05 Package manager GPG/signature check
 PKG_GPG_OK=false

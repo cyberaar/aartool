@@ -17,7 +17,7 @@
 # =============================================================================
 
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
-SCRIPT_VERSION="4.8.4"
+SCRIPT_VERSION="4.8.5"
 SCRIPT_NAME="aartool-baseline"
 
 _show_help() {
