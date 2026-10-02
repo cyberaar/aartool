@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.1] - 2026-10-02
+
+### Changed
+
+- **Baseline check INT-04 now names the all-interface listeners instead of
+  only counting open ports.** It separates `0.0.0.0` / `::` binds from
+  loopback and lists the all-interface ports, so an auditor sees which
+  services are exposed on every interface rather than a bare number. The
+  check's id, title, status and UNMAPPED/WARN disposition are unchanged, so
+  there is no wave, score or remediation drift.
+
+
 ### Fixed
 
 - **The release's `SHA256SUMS` covered two assets out of five, and the release
