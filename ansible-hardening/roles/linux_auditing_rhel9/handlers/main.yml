@@ -12,3 +12,13 @@
   ansible.builtin.service:
     name: "rsyslog"
     state: "restarted"
+
+- name: "Run grub2-mkconfig"
+  ansible.builtin.command: "grub2-mkconfig -o /boot/grub2/grub.cfg"
+  changed_when: true
+  listen: "Regenerate GRUB configuration"
+
+- name: "Announce that the boot parameters apply at the next reboot"
+  ansible.builtin.debug:
+    msg: "Boot-time audit parameters changed. They take effect at the next reboot."
+  listen: "Regenerate GRUB configuration"

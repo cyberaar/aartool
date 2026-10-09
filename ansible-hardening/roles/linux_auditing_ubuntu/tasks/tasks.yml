@@ -54,33 +54,60 @@
     path: "/etc/default/grub"
   register: "_grub_file"
 
-- name: "Enable boot-time auditing in GRUB cmdline"
+# Each task below changes the line only when it has to, so a second run is a
+# no-op. The previous single lineinfile matched every GRUB_CMDLINE_LINUX line
+# and appended " audit=1" on every run ("audit=1 audit=1 ..." in the field),
+# and nothing set audit_backlog_limit: with the kernel default of 64, events
+# raised before auditd loads its rules are lost at every boot.
+- name: "Collapse repeated audit=1 left by earlier runs"
+  when:
+    - "linux_auditd_enable_boot_auditing | bool"
+    - "_grub_file.stat.exists"
+  ansible.builtin.replace:
+    path: "/etc/default/grub"
+    regexp: '\baudit=1(?:\s+audit=1\b)+'
+    replace: "audit=1"
+  notify: "Regenerate GRUB configuration"
+
+- name: "Enable boot-time auditing in GRUB cmdline (only if absent)"
   when:
     - "linux_auditd_enable_boot_auditing | bool"
     - "_grub_file.stat.exists"
   ansible.builtin.lineinfile:
     path: "/etc/default/grub"
-    regexp: '^(GRUB_CMDLINE_LINUX=")(.*)"$'
-    line: '\g<1>\2 audit=1"'
+    # Matches only a line that does not already carry audit=1.
+    regexp: '^GRUB_CMDLINE_LINUX="((?:(?!\baudit=1\b)[^"])*)"$'
+    line: 'GRUB_CMDLINE_LINUX="\1 audit=1"'
     backrefs: true
-  register: "grub_audit_result"
+  notify: "Regenerate GRUB configuration"
 
-- name: "Rebuild GRUB config if boot auditing changed"
+- name: "Set the configured audit backlog limit where one is present"
   when:
+    - "linux_auditd_enable_boot_auditing | bool"
     - "_grub_file.stat.exists"
-    - "grub_audit_result.changed | default(false)"
-  ansible.builtin.command: "update-grub"
-  changed_when: true
+    - "linux_auditd_backlog_limit | int > 0"
+  ansible.builtin.replace:
+    path: "/etc/default/grub"
+    regexp: '\baudit_backlog_limit=(?!{{ linux_auditd_backlog_limit | int }}\b)\d+\b'
+    replace: "audit_backlog_limit={{ linux_auditd_backlog_limit | int }}"
+  notify: "Regenerate GRUB configuration"
+
+- name: "Add the audit backlog limit to the GRUB cmdline (only if absent)"
+  when:
+    - "linux_auditd_enable_boot_auditing | bool"
+    - "_grub_file.stat.exists"
+    - "linux_auditd_backlog_limit | int > 0"
+  ansible.builtin.lineinfile:
+    path: "/etc/default/grub"
+    regexp: '^GRUB_CMDLINE_LINUX="((?:(?!\baudit_backlog_limit=)[^"])*)"$'
+    line: 'GRUB_CMDLINE_LINUX="\1 audit_backlog_limit={{ linux_auditd_backlog_limit | int }}"'
+    backrefs: true
+  notify: "Regenerate GRUB configuration"
 
 - name: "Note: GRUB boot auditing skipped (no /etc/default/grub)"
   when: "not _grub_file.stat.exists"
   ansible.builtin.debug:
     msg: "GRUB not found — boot-time audit=1 cmdline skipped."
-
-- name: "Notify about reboot for boot auditing" # noqa: no-handler
-  when: "grub_audit_result.changed | default(false)"
-  ansible.builtin.debug:
-    msg: "Boot-time auditing changes applied. Reboot required for full effect."
 
 # ── Syslog plugin ─────────────────────────────────────────────────────────────
 # audispd-plugins installs syslog.conf only after auditd has run once.

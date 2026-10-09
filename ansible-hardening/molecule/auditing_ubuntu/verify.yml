@@ -150,3 +150,28 @@
           - ansible_facts.services['rsyslog.service'] is defined
           - ansible_facts.services['rsyslog.service'].state == 'running'
         fail_msg: "rsyslog.service is not running"
+
+    # ── GRUB cmdline: audit parameters exactly once, nothing else lost ─────────
+    - name: "Read /etc/default/grub"
+      ansible.builtin.slurp:
+        src: /etc/default/grub
+      register: _grub_default
+
+    - name: "Assert audit=1 and the backlog limit appear exactly once"
+      vars:
+        _grub_line: "{{ (_grub_default.content | b64decode).splitlines() | select('match', '^GRUB_CMDLINE_LINUX=') | first }}"
+      ansible.builtin.assert:
+        that:
+          - "_grub_line | regex_findall('(?:^|[\\s\"])audit=1(?=[\\s\"])') | length == 1"
+          - "_grub_line | regex_findall('audit_backlog_limit=8192') | length == 1"
+        fail_msg: "Unexpected GRUB_CMDLINE_LINUX: {{ _grub_line }}"
+
+    - name: "Check that the boot loader regeneration ran"
+      ansible.builtin.stat:
+        path: /var/tmp/update-grub.calls
+      register: _regen_calls
+
+    - name: "Assert update-grub was called (handler fired)"
+      ansible.builtin.assert:
+        that: "_regen_calls.stat.exists"
+        fail_msg: "update-grub was never called after the cmdline changed"

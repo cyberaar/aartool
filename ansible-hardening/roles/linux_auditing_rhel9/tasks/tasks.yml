@@ -41,29 +41,91 @@
     path: "/etc/default/grub"
   register: "_grub_file"
 
-- name: "Enable boot-time auditing in GRUB if configured"
+# The previous task REPLACED the whole GRUB_CMDLINE_LINUX line with
+# "audit=1": every other parameter (rd.lvm.lv, crashkernel, resume...) was
+# dropped, which can leave an LVM host unable to find its root at the next
+# grub2-mkconfig. It also never reached the installed kernels, which on
+# RHEL 9 boot from BLS entries carrying their own arguments. Now: append only
+# what is missing to /etc/default/grub (kernels installed later inherit it),
+# and use grubby for the kernels already installed. Every step is a no-op on
+# a second run.
+- name: "Collapse repeated audit=1 in /etc/default/grub"
+  when:
+    - "linux_auditd_enable_boot_auditing | bool"
+    - "_grub_file.stat.exists"
+  ansible.builtin.replace:
+    path: "/etc/default/grub"
+    regexp: '\baudit=1(?:\s+audit=1\b)+'
+    replace: "audit=1"
+  notify: "Regenerate GRUB configuration"
+
+- name: "Enable boot-time auditing in /etc/default/grub (only if absent)"
   when:
     - "linux_auditd_enable_boot_auditing | bool"
     - "_grub_file.stat.exists"
   ansible.builtin.lineinfile:
     path: "/etc/default/grub"
-    regexp: "^GRUB_CMDLINE_LINUX="
-    line: "GRUB_CMDLINE_LINUX=\"audit=1\""
+    regexp: '^GRUB_CMDLINE_LINUX="((?:(?!\baudit=1\b)[^"])*)"$'
+    line: 'GRUB_CMDLINE_LINUX="\1 audit=1"'
     backrefs: true
-  register: "grub_audit_result"
+  notify: "Regenerate GRUB configuration"
 
-- name: "Rebuild GRUB config if boot auditing enabled"
+- name: "Set the configured audit backlog limit where one is present"
   when:
+    - "linux_auditd_enable_boot_auditing | bool"
     - "_grub_file.stat.exists"
-    - "grub_audit_result.changed | default(false)"
-  ansible.builtin.command: "grub2-mkconfig -o /boot/grub2/grub.cfg"
-  changed_when: true
+    - "linux_auditd_backlog_limit | int > 0"
+  ansible.builtin.replace:
+    path: "/etc/default/grub"
+    regexp: '\baudit_backlog_limit=(?!{{ linux_auditd_backlog_limit | int }}\b)\d+\b'
+    replace: "audit_backlog_limit={{ linux_auditd_backlog_limit | int }}"
+  notify: "Regenerate GRUB configuration"
 
-# Optional debug / notice
-- name: "Notify about potential reboot for boot auditing" # noqa: no-handler
-  when: "grub_audit_result.changed | default(false)"
-  ansible.builtin.debug:
-    msg: "Boot-time auditing changes applied. Reboot required for full effect if GRUB was modified."
+- name: "Add the audit backlog limit to /etc/default/grub (only if absent)"
+  when:
+    - "linux_auditd_enable_boot_auditing | bool"
+    - "_grub_file.stat.exists"
+    - "linux_auditd_backlog_limit | int > 0"
+  ansible.builtin.lineinfile:
+    path: "/etc/default/grub"
+    regexp: '^GRUB_CMDLINE_LINUX="((?:(?!\baudit_backlog_limit=)[^"])*)"$'
+    line: 'GRUB_CMDLINE_LINUX="\1 audit_backlog_limit={{ linux_auditd_backlog_limit | int }}"'
+    backrefs: true
+  notify: "Regenerate GRUB configuration"
+
+- name: "Check for grubby (BLS boot entries)"
+  ansible.builtin.stat:
+    path: "/usr/sbin/grubby"
+  register: "_grubby_bin"
+
+- name: "Read the arguments of the installed kernels"
+  when:
+    - "linux_auditd_enable_boot_auditing | bool"
+    - "_grubby_bin.stat.exists"
+  ansible.builtin.command: "grubby --info=ALL"
+  register: "_grubby_info"
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "Add the audit arguments to the installed kernels if any lacks them"
+  when:
+    - "linux_auditd_enable_boot_auditing | bool"
+    - "_grubby_bin.stat.exists"
+    - "_grubby_info.rc | default(1) == 0"
+    - "_grubby_args | length > 0"
+    - "_grubby_args | reject('search', _grubby_audit_re) | list | length > 0
+       or ((linux_auditd_backlog_limit | int) > 0
+           and _grubby_args | reject('search', _grubby_backlog_re) | list | length > 0)"
+  vars:
+    # One "args=..." line per installed kernel.
+    _grubby_args: "{{ _grubby_info.stdout_lines | default([]) | select('match', '^args=') | list }}"
+    _grubby_audit_re: '(^args="?|\s)audit=1(\s|"|$)'
+    _grubby_backlog_re: '(^args="?|\s)audit_backlog_limit={{ linux_auditd_backlog_limit | int }}(\s|"|$)'
+    _grubby_wanted: "audit=1{{ (' audit_backlog_limit=' ~ (linux_auditd_backlog_limit | int)) if (linux_auditd_backlog_limit | int) > 0 else '' }}"
+  # grubby replaces an existing key's value and never duplicates an argument.
+  ansible.builtin.command: "grubby --update-kernel=ALL --args={{ _grubby_wanted | quote }}"
+  changed_when: true
 
 - name: "Enable auditd syslog plugin if forwarding to local rsyslog requested"
   when:
