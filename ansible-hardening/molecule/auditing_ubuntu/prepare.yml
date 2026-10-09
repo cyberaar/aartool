@@ -9,3 +9,20 @@
       ansible.builtin.apt:
         update_cache: true
         cache_valid_time: 3600
+
+    # The GRUB path never ran in CI (containers have no /etc/default/grub), so
+    # a task that appended " audit=1" on every run went unnoticed until it was
+    # found in the field. Seed a realistic file and stub the regeneration
+    # command: converge must fix it, and the idempotence step must then see no
+    # change on the second run.
+    - name: "Seed /etc/default/grub with a realistic cmdline"
+      ansible.builtin.copy:
+        dest: /etc/default/grub
+        content: "GRUB_DEFAULT=0\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\"\nGRUB_CMDLINE_LINUX=\" audit=1 audit=1\"\n"
+        mode: "0644"
+
+    - name: "Stub update-grub (the container has no boot loader to regenerate)"
+      ansible.builtin.copy:
+        dest: /usr/sbin/update-grub
+        content: "#!/bin/sh\necho called >> /var/tmp/update-grub.calls\n"
+        mode: "0755"

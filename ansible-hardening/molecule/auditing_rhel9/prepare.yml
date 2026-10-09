@@ -8,3 +8,20 @@
     - name: "Update dnf cache"
       ansible.builtin.dnf:
         update_cache: true
+
+    # The GRUB path never ran in CI (containers have no /etc/default/grub), so
+    # a task that appended " audit=1" on every run went unnoticed until it was
+    # found in the field. Seed a realistic file and stub the regeneration
+    # command: converge must fix it, and the idempotence step must then see no
+    # change on the second run.
+    - name: "Seed /etc/default/grub with a realistic cmdline"
+      ansible.builtin.copy:
+        dest: /etc/default/grub
+        content: "GRUB_TIMEOUT=5\nGRUB_CMDLINE_LINUX=\"crashkernel=1G-4G:192M rd.lvm.lv=rhel/root rd.lvm.lv=rhel/swap rhgb quiet\"\nGRUB_ENABLE_BLSCFG=true\n"
+        mode: "0644"
+
+    - name: "Stub grub2-mkconfig (the container has no boot loader to regenerate)"
+      ansible.builtin.copy:
+        dest: /usr/sbin/grub2-mkconfig
+        content: "#!/bin/sh\necho called >> /var/tmp/grub2-mkconfig.calls\n"
+        mode: "0755"

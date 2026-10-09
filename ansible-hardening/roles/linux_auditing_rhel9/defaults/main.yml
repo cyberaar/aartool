@@ -11,6 +11,11 @@ linux_auditd_flush: "incremental_async" # performance + reliability
 # Enable boot-time auditing (grub cmdline)
 linux_auditd_enable_boot_auditing: true
 
+# Kernel audit backlog used before auditd starts (CIS: audit_backlog_limit
+# >= 8192). With audit=1 alone the kernel keeps 64 records, and events raised
+# early in boot are lost before auditd loads its rules. 0 leaves it unset.
+linux_auditd_backlog_limit: 8192
+
 # Path for main config
 linux_auditd_conf_file: "/etc/audit/auditd.conf"
 

@@ -18,10 +18,14 @@ RHEL 9 / AlmaLinux 9 / Rocky Linux 9
 ## Idempotence
 - Templates check content → only change if needed  
 - Service restart only on actual change  
-- GRUB only modified if boot auditing enabled
+- GRUB only modified if boot auditing enabled; `audit=1` and
+  `audit_backlog_limit` are appended to `/etc/default/grub` only when absent
+  (existing parameters are kept), and added to the installed kernels with
+  `grubby` only when one of them lacks them
 
 ## Variables
 - Tune `linux_auditd_*` for log sizes/actions  
+- `linux_auditd_backlog_limit: 8192`: kernel audit backlog before auditd starts (`0` leaves it unset)  
 - Add more rules by extending the template
 
 ## Notes

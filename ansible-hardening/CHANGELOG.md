@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`linux_auditing_ubuntu` appended ` audit=1` to the kernel cmdline on every
+  run.** Its `lineinfile` regexp matched every `GRUB_CMDLINE_LINUX` line, so a
+  host hardened ten times carried `audit=1` ten times, and `update-grub` ran on
+  every play. The parameter is now added only when absent, and duplicates left
+  by earlier runs are collapsed to one.
+- **`linux_auditing_rhel9` replaced the whole `GRUB_CMDLINE_LINUX` line with
+  `"audit=1"`.** Every other parameter (`rd.lvm.lv`, `crashkernel`, `resume`)
+  was dropped from `/etc/default/grub`, which can leave an LVM host unable to
+  find its root after the next `grub2-mkconfig`. It also never reached the
+  installed kernels, which on RHEL 9 boot from BLS entries. Parameters are now
+  appended only when absent and existing ones are kept; installed kernels are
+  updated with `grubby`, only when one of them lacks the arguments.
+- The GRUB path had never run in CI (the Molecule containers have no
+  `/etc/default/grub`). Both auditing scenarios now seed a realistic file and
+  stub the regeneration command, so the idempotence step fails if a run is not
+  a no-op.
+
+### Added
+
+- **`linux_auditd_backlog_limit` (default `8192`)** sets `audit_backlog_limit`
+  on the kernel cmdline, on both families. With `audit=1` alone the kernel
+  keeps 64 records, and events raised before auditd loads its rules are lost at
+  every boot (CIS recommends at least 8192). `0` leaves it unset.
+
 ## [3.6.1] - 2026-10-02
 
 ### Changed

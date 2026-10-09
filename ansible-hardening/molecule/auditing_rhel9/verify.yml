@@ -156,3 +156,31 @@
         msg: >-
           rsyslog.service state: {{ ansible_facts.services['rsyslog.service'].state | default('unknown') }}
           (service may not be running in containers without full systemd/kernel support — enabled state verified above).
+
+    # ── GRUB cmdline: audit parameters exactly once, nothing else lost ─────────
+    - name: "Read /etc/default/grub"
+      ansible.builtin.slurp:
+        src: /etc/default/grub
+      register: _grub_default
+
+    - name: "Assert audit=1 and the backlog limit appear exactly once"
+      vars:
+        _grub_line: "{{ (_grub_default.content | b64decode).splitlines() | select('match', '^GRUB_CMDLINE_LINUX=') | first }}"
+      ansible.builtin.assert:
+        that:
+          - "_grub_line | regex_findall('(?:^|[\\s\"])audit=1(?=[\\s\"])') | length == 1"
+          - "_grub_line | regex_findall('audit_backlog_limit=8192') | length == 1"
+          - "'rd.lvm.lv=rhel/root' in _grub_line"
+          - "'crashkernel=1G-4G:192M' in _grub_line"
+          - "'rhgb quiet' in _grub_line"
+        fail_msg: "Unexpected GRUB_CMDLINE_LINUX: {{ _grub_line }}"
+
+    - name: "Check that the boot loader regeneration ran"
+      ansible.builtin.stat:
+        path: /var/tmp/grub2-mkconfig.calls
+      register: _regen_calls
+
+    - name: "Assert grub2-mkconfig was called (handler fired)"
+      ansible.builtin.assert:
+        that: "_regen_calls.stat.exists"
+        fail_msg: "grub2-mkconfig was never called after the cmdline changed"
