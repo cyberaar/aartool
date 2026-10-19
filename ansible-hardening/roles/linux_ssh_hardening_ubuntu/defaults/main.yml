@@ -21,7 +21,7 @@ linux_ssh_permit_tunnel: "no"
 
 # Strong ciphers/MACs/KexAlgorithms (CIS 5.1.13-5.1.15)
 linux_ssh_ciphers: "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
-linux_ssh_macs: "hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
+linux_ssh_macs: "hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
 linux_ssh_kexalgorithms: "curve25519-sha256,diffie-hellman-group-exchange-sha256,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512"
 
 # Banner (CIS 5.1.7)

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The SSH roles allowed `umac-128-etm@openssh.com`, which CIS Ubuntu 24.04
+  check 35654 refuses.** On every hardened Ubuntu 24.04 host the check failed
+  from the first scan, while the rest of the MACs line was compliant. The
+  `linux_ssh_macs` default is now the four SHA-2 MACs, ETM first, in both the
+  Ubuntu and the RHEL 9 roles. The RHEL 9 change is for consistency: Wazuh's
+  CIS RHEL 9 v1.0.0 policy has no MACs check, it relies on the system crypto
+  policy. Found and verified on a 15-node Ubuntu 24.04 estate (`sshd -T`
+  without `umac-128`, ssh active, fresh connections working).
+
 ## [3.6.1] - 2026-10-02
 
 ### Changed
