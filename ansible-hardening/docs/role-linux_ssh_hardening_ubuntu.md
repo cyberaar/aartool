@@ -50,7 +50,7 @@ Hardens the OpenSSH server configuration on Ubuntu/Debian systems:
 | `linux_ssh_login_grace_time` | `30` | Seconds to complete authentication |
 | `linux_ssh_client_alive_interval` | `300` | Seconds between keepalive probes |
 | `linux_ssh_client_alive_count_max` | `3` | Missed probes before disconnect |
-| `linux_ssh_subsystem` | `sftp internal-sftp` | SFTP subsystem configuration |
+| `linux_ssh_subsystem` | `internal-sftp` | Command run for the sftp subsystem (the role writes `Subsystem sftp <value>`) |
 | `linux_ssh_sshd_binary` | `/usr/sbin/sshd` | Path to sshd for config validation |
 | `linux_ssh_hardening_disabled` | `false` | Set `true` to skip this role entirely |
 

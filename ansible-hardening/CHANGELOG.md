@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The SSH roles wrote `Subsystem sftp sftp internal-sftp`, which breaks SFTP
+  and `scp` on every hardened host.** The template prints `Subsystem sftp`
+  itself and the `linux_ssh_subsystem` default repeated `sftp`, so sshd ran the
+  `sftp` client with `internal-sftp` as its argument and closed each session
+  ("scp: Connection closed"; OpenSSH 9 `scp` speaks SFTP). Default is now
+  `internal-sftp` in the Ubuntu and RHEL 9 roles, and the template strips a
+  leading `sftp` so an inventory still carrying the old documented value renders
+  correctly. Found on a 15-node Ubuntu 24.04 estate where every node had the
+  doubled line (`sshd -T`).
+
 - **The SSH roles allowed `umac-128-etm@openssh.com`, which CIS Ubuntu 24.04
   check 35654 refuses.** On every hardened Ubuntu 24.04 host the check failed
   from the first scan, while the rest of the MACs line was compliant. The

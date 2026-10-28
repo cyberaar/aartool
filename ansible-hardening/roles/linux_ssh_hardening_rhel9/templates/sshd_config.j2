@@ -17,7 +17,7 @@ MaxStartups {{ linux_ssh_max_startups }}
 
 Banner {{ linux_ssh_banner }}
 
-Subsystem sftp {{ linux_ssh_subsystem }}
+Subsystem sftp {{ linux_ssh_subsystem | regex_replace('^\\s*sftp\\s+', '') }}
 
 # Additional security
 LoginGraceTime {{ linux_ssh_login_grace_time }}
