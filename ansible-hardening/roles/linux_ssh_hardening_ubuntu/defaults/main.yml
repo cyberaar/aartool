@@ -42,7 +42,8 @@ linux_ssh_client_alive_interval: 300
 linux_ssh_client_alive_count_max: 3
 
 # Subsystem sftp
-linux_ssh_subsystem: "sftp internal-sftp"
+# The command sshd runs for the sftp subsystem (the template writes "Subsystem sftp").
+linux_ssh_subsystem: "internal-sftp"
 
 # Ubuntu sshd binary path
 linux_ssh_sshd_binary: "/usr/sbin/sshd"

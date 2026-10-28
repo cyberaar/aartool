@@ -58,7 +58,7 @@ Hardens the OpenSSH server configuration on RHEL 9 family systems:
 | `linux_ssh_login_grace_time` | `60` | `LoginGraceTime` in seconds |
 | `linux_ssh_client_alive_interval` | `300` | `ClientAliveInterval` in seconds (5 min) |
 | `linux_ssh_client_alive_count_max` | `3` | `ClientAliveCountMax`: probes before drop |
-| `linux_ssh_subsystem` | `sftp internal-sftp` | Subsystem configuration |
+| `linux_ssh_subsystem` | `internal-sftp` | Command run for the sftp subsystem (the role writes `Subsystem sftp <value>`) |
 | `linux_ssh_hardening_disabled` | `false` | Set `true` to skip this role entirely |
 
 ## Usage Example

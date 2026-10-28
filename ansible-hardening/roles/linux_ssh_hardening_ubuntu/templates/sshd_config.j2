@@ -26,7 +26,7 @@ ClientAliveCountMax {{ linux_ssh_client_alive_count_max }}
 
 Banner {{ linux_ssh_banner }}
 
-Subsystem sftp {{ linux_ssh_subsystem }}
+Subsystem sftp {{ linux_ssh_subsystem | regex_replace('^\\s*sftp\\s+', '') }}
 
 # Additional hardening
 IgnoreRhosts yes
